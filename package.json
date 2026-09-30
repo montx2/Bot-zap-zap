@@ -1,23 +1,20 @@
 {
-  "name": "bot-zap-supremo",
-  "version": "6.1.0",
-  "description": "Bot pessoal WhatsApp Termux-first com recuperação resiliente de conexão, View Once, arquivo local, monitoramento de eventos, cofre, mídia, Sticker Engine 2.0 e automações.",
+  "name": "nexus-bot",
+  "version": "7.0.0",
+  "description": "⚡ NEXUS — WhatsApp Multi-Device bot: View Once, Anti-Delete com filtros, Stickers com remoção de fundo por IA (pool de APIs), IA completa (chat, imagens, voz, tradução) e downloader universal (Pinterest, TikTok, Instagram e mais), com melhor qualidade por padrão. Termux-first, também roda em Linux e Windows.",
   "type": "module",
   "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js",
-    "pair": "node src/pair.js",
+    "pair": "node scripts/pair.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "test": "node scripts/selftest.mjs",
-    "integration-test": "rm -rf .test-runtime; BOT_ROOT=$PWD/.test-runtime node --loader ./tests/mock-loader.mjs ./tests/integration.mjs; code=$?; rm -rf .test-runtime; exit $code",
-    "connection-test": "rm -rf .test-runtime; BOT_ROOT=$PWD/.test-runtime node --no-warnings --loader ./tests/sim-loader.mjs ./tests/connection-sim.mjs; code=$?; rm -rf .test-runtime; exit $code",
-    "connection-smoke": "node scripts/connection-smoke.mjs"
+    "test": "node --test tests/unit.test.mjs tests/integration.test.mjs"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.24",
-    "pino": "9.6.0"
+    "qrcode-terminal": "0.12.0"
   }
 }

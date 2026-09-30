@@ -1,83 +1,68 @@
-# Instalação no Termux
+# 📱 Instalação no Termux — passo a passo
 
-## 1. Preparar
+> O NEXUS no Termux usa **pareamento por código**: nada de QR Code.
+
+## 1. Preparar o Termux
+
+Abra o Termux e rode (aceite todos os `y`):
 
 ```bash
 pkg update -y && pkg upgrade -y
-pkg install nodejs-lts git ffmpeg unzip nano termux-api -y
+pkg install -y git nodejs-lts ffmpeg
 termux-setup-storage
 ```
 
-## 2. Extrair
-
-Coloque `Bot-Zap-Supremo-2026.zip` em `Download` do Android e rode:
+## 2. Baixar o bot
 
 ```bash
-cd ~/storage/downloads
-unzip Bot-Zap-Supremo-2026.zip -d ~
-mv ~/Bot-Zap-Supremo-2026 ~/Bot-Zap-Supremo
-cd ~/Bot-Zap-Supremo
+cd ~
+git clone https://github.com/montx2/Bot-zap-zap.git
+cd Bot-zap-zap
+./install-termux.sh
 ```
 
-## 3. Instalar e validar
+## 3. Parear seu WhatsApp
 
 ```bash
-cp .env.example .env   # opcional: personalize
-npm ci
-./bot.sh doctor
-./bot.sh test
-```
-
-## 4. Parear por código
-
-```bash
-./bot.sh pair 55DDDNUMERO
+./bot.sh pair 55SEUDDDSEUNUMERO     # ex.: ./bot.sh pair 5511999999999
 ./bot.sh start
-./bot.sh logs
 ```
 
-No WhatsApp, abra Dispositivos conectados e escolha a opção de conectar usando número de telefone. Digite o código mostrado pelo Termux.
+O bot vai mostrar um **código de 8 letras** no terminal.
 
-## 5. Conexão e operação
+No celular:
+1. WhatsApp → **⋮** → **Dispositivos conectados**
+2. **Conectar um dispositivo**
+3. **Conectar com número de telefone**
+4. Digite o código de 8 letras
 
-O bot consulta automaticamente a versão atual do WhatsApp Web antes de conectar. Não é necessário informar a versão manualmente na instalação normal.
+Pronto! Mande **`.menu`** em qualquer conversa. 🚀
+
+## 4. Recomendações para o Termux
 
 ```bash
-./bot.sh status
-./bot.sh logs
-./bot.sh restart
-./bot.sh stop
-./bot.sh backup
-./bot.sh doctor
+termux-wake-lock        # impede o Android de suspender o bot
 ```
 
-## 6. Operação
+- Desative a otimização de bateria para o Termux (Configurações do Android → Bateria).
+- Se fechar o Termux, o bot para. Use `termux-wake-lock` e mantenha o app aberto
+  (ou use o Termux:Boot + um script para iniciar sozinho).
 
-```bash
-./bot.sh status
-./bot.sh logs
-./bot.sh restart
-./bot.sh stop
-./bot.sh backup
-./bot.sh doctor
-```
+## 5. Comandos do launcher
 
-## 7. Auto-start
+| Comando | O que faz |
+|---|---|
+| `./bot.sh start` | inicia o bot |
+| `./bot.sh pair NUMERO` | salva número de pareamento |
+| `./bot.sh doctor` | diagnóstico do ambiente |
+| `./bot.sh test` | roda os testes |
+| `./bot.sh update` | atualiza o código e dependências |
+| `./bot.sh stop` | para o bot |
 
-Instale o aplicativo Termux:Boot e execute:
+## ❓ Erros comuns
 
-```bash
-./bot.sh boot-install
-```
-
-Depois de reiniciar o Android, o Termux:Boot chama o supervisor do bot.
-
-## 8. Se `npm ci` der EACCES
-
-Nunca instale dependências dentro de `~/storage/downloads`. Use:
-
-```bash
-cp -r ~/storage/downloads/Bot-Zap-Supremo ~
-cd ~/Bot-Zap-Supremo
-npm ci
-```
+- **`FFmpeg ausente`** → `pkg install ffmpeg`
+- **`Cannot find module`** → `npm install` dentro da pasta do bot
+- **`node: command not found`** → `pkg install nodejs-lts`
+- **Não conecta / loop** → confira internet; o bot salva a versão do WA Web sozinho
+- **Sessão expirou** → apague `data/auth` e repita o passo 3

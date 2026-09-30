@@ -1,76 +1,130 @@
-import process from 'node:process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Configuração persistente do NEXUS (data/config.json).
+// Tudo que o usuário pode ligar/desligar em tempo real fica aqui.
+// Padrões: Anti-Delete ATIVO em tudo, View Once ativo, auto-download ativo.
 
-// Carrega o .env (não sobrescreve variáveis já definidas no ambiente).
-try { process.loadEnvFile?.(path.join(path.resolve(process.env.BOT_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')), '.env')); } catch { /* .env é opcional */ }
+import { readJson, writeJsonNow, writeJsonDebounced } from './store.js';
+import { envList, envBool } from './env.js';
 
-const ROOT = path.resolve(process.env.BOT_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'));
-const bool = (v, fallback) => v == null ? fallback : /^(1|true|on|yes)$/i.test(String(v));
-const num = (v, fallback) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+export const DEFAULT_CONFIG = {
+  nomeBot: '⚡ NEXUS',
+  nomePack: 'NEXUS ⚡',
+  autorPack: 'feito com amor',
+  prefixos: ['.', '!', '/', '#'],
 
-export const CONFIG = Object.freeze({
-  ROOT,
-  BRAND: process.env.BOT_BRAND ?? 'by 𝖒𝖔𝖓𝖙𝖝2_',
-  PREFIX: process.env.BOT_PREFIX || '.',
-  TZ: process.env.BOT_TZ || 'America/Sao_Paulo',
-  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
-  NODE_MIN: 24,
-  WA_VERSION_OVERRIDE: process.env.WA_VERSION_OVERRIDE || '',
-  DEFAULT_QUERY_TIMEOUT_MS: num(process.env.DEFAULT_QUERY_TIMEOUT_MS, 60_000),
-  CONNECT_TIMEOUT_MS: num(process.env.CONNECT_TIMEOUT_MS, 30_000),
-  KEEP_ALIVE_INTERVAL_MS: num(process.env.KEEP_ALIVE_INTERVAL_MS, 25_000),
-  RETRY_REQUEST_DELAY_MS: num(process.env.RETRY_REQUEST_DELAY_MS, 1_000),
-  HEALTH_PROBE_INTERVAL_MS: num(process.env.HEALTH_PROBE_INTERVAL_MS, 5 * 60_000),
-  HEALTH_PROBE_TIMEOUT_MS: num(process.env.HEALTH_PROBE_TIMEOUT_MS, 20_000),
-  AUTH_DIR: path.join(ROOT, 'data', 'auth'),
-  DATA_DIR: path.join(ROOT, 'data'),
-  DB_PATH: path.join(ROOT, 'data', 'bot.db'),
-  LOG_DIR: path.join(ROOT, 'logs'),
-  STORAGE_DIR: path.join(ROOT, 'storage'),
-  MEDIA_DIR: path.join(ROOT, 'storage', 'media'),
-  VAULT_DIR: path.join(ROOT, 'storage', 'vault'),
-  BLACK_DIR: path.join(ROOT, 'storage', 'black'),
-  STATUS_DIR: path.join(ROOT, 'storage', 'status'),
-  EXPORT_DIR: path.join(ROOT, 'storage', 'exports'),
-  BACKUP_DIR: path.join(ROOT, 'storage', 'backups'),
-  TMP_DIR: path.join(ROOT, '.tmp'),
-  VIEW_ONCE_AUTO: bool(process.env.VIEW_ONCE_AUTO, true),
-  VIEW_ONCE_RETRIES: num(process.env.VIEW_ONCE_RETRIES, 15),
-  STATUS_SAVER: bool(process.env.STATUS_SAVER, false),
-  STATUS_ONLY_WATCH: bool(process.env.STATUS_ONLY_WATCH, true),
-  MEDIA_VAULT: bool(process.env.MEDIA_VAULT, true),
-  MEDIA_ONLY_WATCH: bool(process.env.MEDIA_ONLY_WATCH, false),
-  ANTI_DELETE: bool(process.env.ANTI_DELETE, true),
-  ANTI_EDIT: bool(process.env.ANTI_EDIT, true),
-  REACTION_MONITOR: bool(process.env.REACTION_MONITOR, true),
-  PRESENCE_MONITOR: bool(process.env.PRESENCE_MONITOR, true),
-  READ_RECEIPT_MONITOR: bool(process.env.READ_RECEIPT_MONITOR, true),
-  CALL_MONITOR: bool(process.env.CALL_MONITOR, true),
-  GROUP_RADAR: bool(process.env.GROUP_RADAR, true),
-  FORWARD_MONITOR: bool(process.env.FORWARD_MONITOR, true),
-  DEVICE_MONITOR: bool(process.env.DEVICE_MONITOR, true),
-  SMART_ALERTS: bool(process.env.SMART_ALERTS, true),
-  PROFILE_MONITOR: bool(process.env.PROFILE_MONITOR, false),
-  AUTO_ARCHIVE: bool(process.env.AUTO_ARCHIVE, true),
-  AUTO_EVENTS: bool(process.env.AUTO_EVENTS, true),
-  DEFAULT_STICKER: bool(process.env.STICKER_DEFAULT, true),
-  // Formato padrão da figurinha: fit (imagem inteira, sem cortar), crop (preenche o quadrado), full, circle, round.
-  STICKER_FIT: process.env.STICKER_FIT || 'fit',
-  MARK_ONLINE: bool(process.env.MARK_ONLINE, false),
-  MAX_MEDIA_MB: num(process.env.MAX_MEDIA_MB, 80),
-  KEEP_RAW_DAYS: num(process.env.KEEP_RAW_DAYS, 21),
-  MEDIA_KEEP_DAYS: num(process.env.MEDIA_KEEP_DAYS, 30),
-  MEDIA_MAX_GB: num(process.env.MEDIA_MAX_GB, 4),
-  LOG_MAX_MB: num(process.env.LOG_MAX_MB, 10),
-  MAX_EXPORT: 5000,
-  STICKER_MAX_SECONDS_LIMIT: 15,
-  STICKER_MAX_SECONDS: Math.min(15, Math.max(1, num(process.env.STICKER_MAX_SECONDS, 10))),
-  STICKER_PACK: process.env.STICKER_PACK || 'by 𝖒𝖔𝖓𝖙𝖝2_',
-  STICKER_AUTHOR: process.env.STICKER_AUTHOR || '',
-  STICKER_MAX_STATIC_KB: num(process.env.STICKER_MAX_STATIC_KB, 100),
-  STICKER_MAX_ANIMATED_KB: num(process.env.STICKER_MAX_ANIMATED_KB, 500),
-  STICKER_REACT: bool(process.env.STICKER_REACT, true),
-  STICKER_AUTO_SELF: bool(process.env.STICKER_AUTO_SELF, false),
-  VIEW_ONCE_DIR: path.join(ROOT, 'storage', 'vault', 'view-once'),
-});
+  // ── View Once ─────────────────────────────────────────────
+  viewOnce: {
+    auto: true, // captura automática e envia para o dono
+    destinoAuto: 'dono', // 'dono' | 'chat' (devolve no próprio chat)
+    resposta: 'todos' // quem pode baixar respondendo a uma visu: 'todos' | 'dono'
+  },
+
+  // ── Anti-Delete ───────────────────────────────────────────
+  antiDelete: {
+    ativo: true, // ATIVO POR PADRÃO EM TUDO
+    restaurarNoChat: true, // devolve a mensagem apagada no próprio chat
+    avisarDono: false, // também encaminha uma cópia para o dono
+    ignorar: [] // filtros: 'grupos', 'privado' ou JIDs específicos
+  },
+
+  // ── Downloads ─────────────────────────────────────────────
+  autoDownload: true, // link solto de rede social já baixa sozinho
+  qualidadePadrao: 'melhor', // melhor | alta | media | baixa
+  maxMB: 90, // limite de tamanho para envio
+
+  // ── IA ────────────────────────────────────────────────────
+  ia: {
+    modeloImagem: 'flux', // flux | turbo
+    vozPadrao: 'nova', // alloy echo fable onyx nova shimmer
+    sistema:
+      'Você é o NEXUS, um assistente de WhatsApp esperto, direto e bem-humorado. ' +
+      'Responda sempre em português do Brasil, curto e útil. Use emojis com moderação.'
+  },
+
+  // ── Comportamento ─────────────────────────────────────────
+  soDonoConfigura: true, // só o dono muda configurações
+  responderDesconhecido: false // responde quando não entende um prefixo
+};
+
+const FILE = 'config.json';
+
+class Config {
+  constructor() {
+    this.data = this.#load();
+  }
+
+  #load() {
+    const saved = readJson(FILE, null);
+    const merged = deepMerge(structuredClone(DEFAULT_CONFIG), saved || {});
+    // Saneamento básico
+    if (!Array.isArray(merged.prefixos) || !merged.prefixos.length) merged.prefixos = DEFAULT_CONFIG.prefixos;
+    if (!Array.isArray(merged.antiDelete.ignorar)) merged.antiDelete.ignorar = [];
+    return merged;
+  }
+
+  get() {
+    return this.data;
+  }
+
+  /** Lê um valor por caminho: cfg.get('antiDelete.ativo') */
+  at(pathStr) {
+    return pathStr.split('.').reduce((acc, part) => (acc == null ? undefined : acc[part]), this.data);
+  }
+
+  /** Define um valor por caminho e persiste. */
+  set(pathStr, value) {
+    const parts = pathStr.split('.');
+    const last = parts.pop();
+    const target = parts.reduce((acc, part) => {
+      if (typeof acc[part] !== 'object' || acc[part] === null) acc[part] = {};
+      return acc[part];
+    }, this.data);
+    target[last] = value;
+    this.save();
+    return value;
+  }
+
+  save() {
+    writeJsonNow(FILE, this.data);
+  }
+
+  saveDebounced() {
+    writeJsonDebounced(FILE, this.data);
+  }
+
+  reset() {
+    this.data = structuredClone(DEFAULT_CONFIG);
+    this.save();
+  }
+}
+
+function deepMerge(base, extra) {
+  for (const [key, value] of Object.entries(extra || {})) {
+    if (value && typeof value === 'object' && !Array.isArray(value) && base[key] && typeof base[key] === 'object') {
+      deepMerge(base[key], value);
+    } else if (value !== undefined) {
+      base[key] = value;
+    }
+  }
+  return base;
+}
+
+export const cfg = new Config();
+
+/** Configurações vindas do ambiente (.env). */
+export const ENV = {
+  ownerNumbers: envList('OWNER_NUMBERS'),
+  pairingNumber: (process.env.PAIRING_NUMBER || '').replace(/\D/g, ''),
+  removeBgKeys: envList('REMOVE_BG_KEYS'),
+  removeBgUrls: envList('REMOVE_BG_URLS'),
+  localRembg: envBool('LOCAL_REMBG', false),
+  geminiKeys: envList('GEMINI_KEYS'),
+  openaiKeys: envList('OPENAI_KEYS'),
+  openaiBase: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+  groqKeys: envList('GROQ_KEYS'),
+  aiBase: process.env.AI_BASE_URL || '',
+  aiKeys: envList('AI_KEYS'),
+  aiModel: process.env.AI_MODEL || '',
+  cobaltInstances: envList('COBALT_INSTANCES'),
+  tiktokApi: envList('TIKTOK_API'),
+  waVersionOverride: process.env.WA_VERSION_OVERRIDE || ''
+};
