@@ -1,6 +1,6 @@
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { getStoredMessage, markDeleted, markEdited, getStoredEnvelope, listEdits, saveEvent } from '../core/db.js';
-import { extractText, getMediaNode, resolveViewOnce, senderName, chatLabel, formatDate, getContext, truncate } from '../core/format.js';
+import { extractText, getMediaNode, resolveViewOnce, senderName, chatLabel, formatDate, getContext, truncate, card, chatKind } from '../core/format.js';
 import { ownerJid } from '../core/identity.js';
 import { recoverArchivedMedia } from './mediaVault.js';
 import { logger } from '../core/logger.js';
@@ -22,7 +22,7 @@ export async function handleDelete(sock,msg,config){if(!isFeatureOn('antidelete'
   const p=msg?.message?.protocolMessage; const id=p?.key?.id||msg.key?.id; const jid=p?.key?.remoteJid||msg.key?.remoteJid; if(!id||!jid)return false; markDeleted(jid,id,Date.now()); saveEvent({kind:'message.deleted',remoteJid:jid,refId:id,data:{}});
   const original=getStoredMessage({remoteJid:jid,id}); if(!original)return false;
   const stored= getStoredEnvelope(jid,id); if(stored?.from_me) return true;
-  const owner=ownerJid(sock); const label=senderName({key:msg.key,pushName:undefined}); const env=getStoredEnvelope(jid,id); const text=extractText(original); let archived=null; const header=`🗑️ *MENSAGEM APAGADA*\n👤 ${env?.sender_name||label}\n💬 ${chatLabel({key:msg.key})}\n🕒 ${formatDate(env?.ts||Date.now())}\n🆔 ${id}`;
+  const owner=ownerJid(sock); const label=senderName({key:msg.key,pushName:undefined}); const env=getStoredEnvelope(jid,id); const text=extractText(original); let archived=null; const who=env?.sender_name||label; const rows=[`👤 ${who}`,`💬 ${chatKind(jid)} · ${chatLabel({key:{remoteJid:jid}})}`,`🕒 ${formatDate(env?.ts||Date.now())}`]; const header=card('🗑️ *MENSAGEM APAGADA*',rows);
   const media=getMediaNode(original);
   if(media?.type){
     archived=await recoverArchivedMedia(jid,id); let buffer=archived?.buffer;
@@ -36,14 +36,14 @@ export async function handleDelete(sock,msg,config){if(!isFeatureOn('antidelete'
       return true;
     }
   }
-  await sock.sendMessage(owner,{text:`${header}\n\n📝 ${text||'[conteúdo de mídia não recuperável]'}\n${archived?'':'⚠️ O arquivo binário não estava disponível no arquivo local.'}`}); return true;
+  await sock.sendMessage(owner,{text:card('🗑️ *MENSAGEM APAGADA*',rows,{body:`${text?`“${truncate(text,1500)}”`:'[conteúdo de mídia não recuperável]'}${media?.type&&!archived?'\n\n⚠️ O arquivo não estava no arquivo local.':''}`})}); return true;
 }
 export async function handleEdit(sock,msg,config,preResolved=null){if(!isFeatureOn('antiedit'))return false;
   const info=preResolved||editInfo(msg); if(!info?.id||!info?.jid)return false;
   const env=getStoredEnvelope(info.jid,info.id); if(env?.from_me) return true;
   const old= getStoredMessage({remoteJid:info.jid,id:info.id}); const oldText=extractText(old); const newText=extractText(info.newMessage); markEdited(info.jid,info.id,oldText,newText,Date.now()); saveEvent({kind:'message.edited',remoteJid:info.jid,refId:info.id,data:{oldText,newText}});
   if(!config.ANTI_EDIT)return true; const owner=ownerJid(sock);
-  await sock.sendMessage(owner,{text:`✏️ *MENSAGEM EDITADA*\n👤 ${env?.sender_name||info.jid.split('@')[0]}\n💬 ${info.jid}\n🕒 ${formatDate(Date.now())}\n\nANTES:\n${truncate(oldText||'[sem texto]',700)}\n\nDEPOIS:\n${truncate(newText||'[sem texto]',700)}`}).catch(()=>{});
+  await sock.sendMessage(owner,{text:card('✏️ *MENSAGEM EDITADA*',[`👤 ${env?.sender_name||info.jid.split('@')[0]}`,`💬 ${chatKind(info.jid)} · ${chatLabel({key:{remoteJid:info.jid}})}`,`🕒 ${formatDate(Date.now())}`],{body:`*Antes*\n${truncate(oldText||'[sem texto]',700)}\n\n*Depois*\n${truncate(newText||'[sem texto]',700)}`})}).catch(()=>{});
   return true;
 }
 export function editsFor(jid,id){return listEdits(jid,id,50);}

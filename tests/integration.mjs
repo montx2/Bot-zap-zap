@@ -239,6 +239,33 @@ ST.setStickerAuto(false);
   n=sent.length; await cmd('.toimg',{stickerMessage:{mimetype:'image/webp',isAnimated:true}}); assert.ok(sent.slice(n).some(x=>x.content?.image));
   n=sent.length; await cmd('.take A | B',{stickerMessage:{mimetype:'image/webp',isAnimated:true}}); assert.equal(W.readStickerExif(lastSticker().sticker).author,'B');
 }
+
+// ───────── Interface da Visualização única / privacidade ─────────
+{
+  const { viewOncePanel,listCaptures,sendCapture,captureCard,sniffMedia }=await import('../src/modules/viewonce.js');
+  const { handleCommand }=await import('../src/core/commands.js');
+  const { CONFIG }=await import('../src/core/config.js');
+  assert.equal(CONFIG.BRAND,'by 𝖒𝖔𝖓𝖙𝖝2_');
+  // cartão da captura: limpo e sem ruído técnico
+  const vm=baseMsg('vo-ui',vo('imageMessage'),false,'5511955555555@s.whatsapp.net'); globalThis.__MOCK_MEDIA_BUFFER=png; archiveIncoming(vm);
+  let n=sent.length; assert.equal(await captureViewOnce(sock,vm),true);
+  const cap=sent.slice(n).find(x=>x.content?.image).content.caption;
+  assert.match(cap,/VISUALIZAÇÃO ÚNICA/); assert.ok(cap.includes('by 𝖒𝖔𝖓𝖙𝖝2_')); assert.match(cap,/📷 Foto/); assert.doesNotMatch(cap,/⚡|🆔/);
+  assert.match(viewOncePanel(),/Capturas: \*\d+\*/);
+  assert.match(listCaptures(5),/CAPTURAS/);
+  const row=DB.listMediaByKind('view-once',1)[0];
+  n=sent.length; await sendCapture(sock,owner,row.id); assert.ok(sent.slice(n).some(x=>x.content?.image),'.vo get deve reenviar a captura');
+  await assert.rejects(()=>sendCapture(sock,owner,999999),/não encontrada/);
+  assert.equal(sniffMedia(png).type,'imageMessage');
+  const cmd=t=>handleCommand(sock,baseMsg(`vo-cmd-${Math.random()}`,{conversation:t},true,owner));
+  await cmd('.vo'); assert.match(sent.at(-1).content.text,/Modo automático/);
+  await cmd('.vo list'); assert.match(sent.at(-1).content.text,/CAPTURAS/);
+  n=sent.length; await cmd(`.vo get ${row.id}`); assert.ok(sent.slice(n).some(x=>x.content?.image));
+  await cmd('.vo get'); assert.match(sent.at(-1).content.text,/❌/);
+  await cmd('.vo off'); assert.match(sent.at(-1).content.text,/desligado/); await cmd('.vo on'); assert.match(sent.at(-1).content.text,/ligado/);
+  await cmd('.status'); assert.match(sent.at(-1).content.text,/STATUS/);
+  ST.resetPack(); assert.equal(ST.getPack(sock).pack,CONFIG.BRAND); assert.equal(ST.getPack(sock).author,'');
+}
 // legado
 for(const [mode,out] of Object.entries({stickerVideo:'out-sticker.webp',gif:'out.mp4',mp3:'out.mp3',ptt:'out.ogg'})){const f=path.join(root,'data',out);await convertMedia(video,f,mode);assert.ok(fs.statSync(f).size>0,`FFmpeg ${mode} não gerou saída`);}
 

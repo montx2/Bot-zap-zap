@@ -58,6 +58,8 @@ export const saveCall=r=>db.prepare('INSERT INTO calls(peer_jid,status,video,cal
 export const saveLink=r=>db.prepare('INSERT INTO links(remote_jid,message_id,url,ts) VALUES(?,?,?,?)').run(r.remoteJid,r.messageId,r.url,r.ts||Date.now());
 export const saveMedia=r=>db.prepare('INSERT OR IGNORE INTO media(remote_jid,message_id,kind,file_path,sha256,bytes,encrypted,created_at) VALUES(?,?,?,?,?,?,?,?)').run(r.remoteJid,r.messageId,r.kind,r.filePath,r.sha256,r.bytes||0,r.encrypted?1:0,r.createdAt||Date.now());
 export const listMedia=(limit=50)=>db.prepare('SELECT * FROM media ORDER BY created_at DESC LIMIT ?').all(limit);
+export const listMediaByKind=(kind,limit=10)=>db.prepare('SELECT * FROM media WHERE kind=? ORDER BY created_at DESC LIMIT ?').all(kind,Math.min(50,Math.max(1,Number(limit)||10)));
+export const countMediaByKind=(kind,since=0)=>db.prepare('SELECT COUNT(*) c FROM media WHERE kind=? AND created_at>=?').get(kind,since).c;
 export const getMediaById=id=>db.prepare('SELECT * FROM media WHERE id=?').get(Number(id))||null;
 export const mediaForMessage=(jid,id)=>db.prepare('SELECT * FROM media WHERE remote_jid=? AND message_id=? ORDER BY created_at DESC LIMIT 20').all(jid,id);
 export const mediaForMessageKind=(jid,id,kind)=>db.prepare('SELECT * FROM media WHERE remote_jid=? AND message_id=? AND kind=? ORDER BY created_at DESC LIMIT 1').get(jid,id,kind)||null;

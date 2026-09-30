@@ -8,6 +8,7 @@ const num = (v, fallback) => Number.isFinite(Number(v)) ? Number(v) : fallback;
 
 export const CONFIG = Object.freeze({
   ROOT,
+  BRAND: process.env.BOT_BRAND ?? 'by 𝖒𝖔𝖓𝖙𝖝2_',
   PREFIX: process.env.BOT_PREFIX || '.',
   TZ: process.env.BOT_TZ || 'America/Sao_Paulo',
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
@@ -57,7 +58,7 @@ export const CONFIG = Object.freeze({
   MAX_EXPORT: 5000,
   STICKER_MAX_SECONDS_LIMIT: 15,
   STICKER_MAX_SECONDS: Math.min(15, Math.max(1, num(process.env.STICKER_MAX_SECONDS, 10))),
-  STICKER_PACK: process.env.STICKER_PACK || 'Bot-Zap Supremo',
+  STICKER_PACK: process.env.STICKER_PACK || 'by 𝖒𝖔𝖓𝖙𝖝2_',
   STICKER_AUTHOR: process.env.STICKER_AUTHOR || '',
   STICKER_MAX_STATIC_KB: num(process.env.STICKER_MAX_STATIC_KB, 100),
   STICKER_MAX_ANIMATED_KB: num(process.env.STICKER_MAX_ANIMATED_KB, 500),

@@ -31,7 +31,7 @@ export function stickerAutoEnabled() { const v = dbGet('sticker.auto'); return v
 export const setStickerAuto = (on) => dbSet('sticker.auto', on ? '1' : '0');
 
 export function getPack(sock) {
-  const fallbackAuthor = CONFIG.STICKER_AUTHOR || sock?.user?.name || 'Bot-Zap';
+  const fallbackAuthor = CONFIG.STICKER_AUTHOR; // vazio por padrão: só o nome do pack aparece (visual limpo)
   return {
     pack: dbGet('sticker.pack') || CONFIG.STICKER_PACK,
     author: dbGet('sticker.author') ?? fallbackAuthor

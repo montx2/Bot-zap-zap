@@ -5,11 +5,11 @@ import path from 'node:path';
 import { CONFIG } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { ownerJid } from '../core/identity.js';
-import { getStoredMessage, saveMedia, saveEvent, dbGet, dbSet, mediaForMessageKind } from '../core/db.js';
+import { getStoredMessage, getStoredEnvelope, saveMedia, saveEvent, dbGet, dbSet, mediaForMessageKind, listMediaByKind, countMediaByKind, getMediaById } from '../core/db.js';
 import { SerialQueues } from '../core/queue.js';
-import { resolveViewOnce, extractText, senderName, chatLabel, formatDate, MEDIA_LABEL, tsMs } from '../core/format.js';
+import { resolveViewOnce, extractText, senderName, chatLabel, formatDate, formatBytes, MEDIA_LABEL, tsMs, card, chatKind } from '../core/format.js';
 import { sha256 } from '../core/media.js';
-import { secureFile } from '../core/security.js';
+import { secureFile, openSecureFile } from '../core/security.js';
 
 const MEDIA = new Set(['imageMessage','videoMessage','audioMessage']);
 const ALL_MEDIA = new Set(['imageMessage','videoMessage','audioMessage','documentMessage','stickerMessage']);
@@ -88,13 +88,93 @@ async function storeCapture(msg,resolved,buffer){
   return {dbId,file:encrypted,sha256:sha256(buffer)};
 }
 async function fsUnlink(file){const {unlink}=await import('node:fs/promises');await unlink(file);}
+const TYPE_ICON={imageMessage:'📷',videoMessage:'🎬',audioMessage:'🎙️',documentMessage:'📄',stickerMessage:'🎨'};
+const TYPE_NAME={imageMessage:'Foto',videoMessage:'Vídeo',audioMessage:'Áudio',documentMessage:'Documento',stickerMessage:'Figurinha'};
+const typeLabel=t=>`${TYPE_ICON[t]||'📦'} ${TYPE_NAME[t]||MEDIA_LABEL[t]||t}`;
+
+/** Cartão limpo da captura (vai como legenda da mídia ou mensagem separada). */
+export function captureCard({type,sender,chat,chatLabelText,ts,bytes,caption,id}){
+  return card('👁️ *VISUALIZAÇÃO ÚNICA*',[
+    `👤 ${sender}`,
+    `💬 ${chat}${chatLabelText?` · ${chatLabelText}`:''}`,
+    `🕒 ${formatDate(ts)}`,
+    `${typeLabel(type)}${bytes?` · ${formatBytes(bytes)}`:''}`,
+    id?`🔖 #${id}`:''
+  ],{body:caption?`“${caption}”`:''});
+}
+
+async function sendMedia(sock,dest,type,node,buffer,text,fallbackName){
+  if(type==='imageMessage')return sock.sendMessage(dest,{image:buffer,caption:text});
+  if(type==='videoMessage')return sock.sendMessage(dest,{video:buffer,caption:text});
+  if(type==='audioMessage'){await sock.sendMessage(dest,{audio:buffer,mimetype:node?.mimetype||'audio/ogg; codecs=opus',ptt:node?.ptt===true});return sock.sendMessage(dest,{text});}
+  if(type==='stickerMessage'){await sock.sendMessage(dest,{sticker:buffer});return sock.sendMessage(dest,{text});}
+  return sock.sendMessage(dest,{document:buffer,fileName:node?.fileName||fallbackName,mimetype:node?.mimetype||'application/octet-stream',caption:text});
+}
 async function forwardOwner(sock,msg,resolved,buffer,via,record){
-  const owner=ownerJid(sock); const node=resolved.mediaNode||{}; const sender=senderName(msg); const label=chatLabel(msg); const meta=`👁️ *VIEW ONCE CAPTURADA*\n👤 ${sender}\n💬 ${label}\n🕒 ${formatDate(msg.messageTimestamp)}\n📦 ${MEDIA_LABEL[resolved.mediaType]||resolved.mediaType}\n⚡ ${via}\n🆔 ${record.dbId}`;
-  if(resolved.mediaType==='imageMessage')return sock.sendMessage(owner,{image:buffer,caption:`${meta}${node.caption?`\n\n📝 ${node.caption}`:''}`});
-  if(resolved.mediaType==='videoMessage')return sock.sendMessage(owner,{video:buffer,caption:`${meta}${node.caption?`\n\n📝 ${node.caption}`:''}`});
-  if(resolved.mediaType==='audioMessage'){await sock.sendMessage(owner,{audio:buffer,mimetype:node.mimetype||'audio/ogg; codecs=opus',ptt:node.ptt===true});return sock.sendMessage(owner,{text:meta});}
-  if(resolved.mediaType==='stickerMessage'){await sock.sendMessage(owner,{sticker:buffer});return sock.sendMessage(owner,{text:meta});}
-  return sock.sendMessage(owner,{document:buffer,fileName:node.fileName||`view-once-${record.dbId}.bin`,mimetype:node.mimetype||'application/octet-stream',caption:meta});
+  const owner=ownerJid(sock); const node=resolved.mediaNode||{};
+  const text=captureCard({type:resolved.mediaType,sender:senderName(msg),chat:chatKind(msg.key.remoteJid),chatLabelText:chatLabel(msg),ts:msg.messageTimestamp,bytes:buffer.length,caption:node.caption,id:record.dbId});
+  return sendMedia(sock,owner,resolved.mediaType,node,buffer,text,`view-once-${record.dbId}.bin`);
+}
+
+/** Descobre o tipo de mídia pelo conteúdo quando a mensagem original não está mais no arquivo. */
+export function sniffMedia(b){
+  if(b[0]===0xFF&&b[1]===0xD8)return {type:'imageMessage',mimetype:'image/jpeg'};
+  if(b.subarray(1,4).toString()==='PNG')return {type:'imageMessage',mimetype:'image/png'};
+  if(b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP')return {type:'stickerMessage',mimetype:'image/webp'};
+  if(b.subarray(4,8).toString()==='ftyp')return {type:'videoMessage',mimetype:'video/mp4'};
+  if(b.subarray(0,4).toString()==='OggS')return {type:'audioMessage',mimetype:'audio/ogg; codecs=opus',ptt:true};
+  if(b.subarray(0,3).toString()==='ID3'||(b[0]===0xFF&&(b[1]&0xE0)===0xE0))return {type:'audioMessage',mimetype:'audio/mpeg'};
+  return {type:'documentMessage',mimetype:'application/octet-stream'};
+}
+
+/** Lista as últimas capturas em formato compacto. */
+export function listCaptures(limit=10){
+  const rows=listMediaByKind('view-once',limit);
+  if(!rows.length)return card('👁️ *CAPTURAS*',['Nenhuma visualização única capturada ainda.']);
+  const lines=rows.map(r=>{
+    const env=getStoredEnvelope(r.remote_jid,r.message_id);
+    const stored=getStoredMessage({remoteJid:r.remote_jid,id:r.message_id});
+    const type=stored?resolveViewOnce(stored).mediaType:null;
+    return `*#${r.id}* ${TYPE_ICON[type]||'📦'} ${env?.sender_name||String(r.remote_jid).split('@')[0]}\n     ${formatDate(r.created_at)} · ${formatBytes(r.bytes)}`;
+  });
+  return card(`👁️ *CAPTURAS* · últimas ${rows.length}`,lines,{body:'Reenviar: `.vo get ID`'});
+}
+
+/** Painel de status. */
+export function viewOncePanel(){
+  const day=new Date();day.setHours(0,0,0,0);
+  const last=listMediaByKind('view-once',1)[0];
+  return card('👁️ *VISUALIZAÇÃO ÚNICA*',[
+    `Modo automático: ${enabled()?'✅ ligado':'🔒 desligado'}`,
+    `Capturas: *${countMediaByKind('view-once')}* · hoje *${countMediaByKind('view-once',day.getTime())}*`,
+    `Última: ${last?formatDate(last.created_at):'—'}`,
+    'Armazenamento: 🔐 cifrado (AES-256)'
+  ],{body:'`.vo on|off` liga/desliga\n`.vo list` últimas capturas\n`.vo get ID` reenvia uma captura\n`.o` responda uma view once para recuperar'});
+}
+
+/** Reenvia uma captura arquivada (cifrada) para `dest`. */
+export async function sendCapture(sock,dest,id){
+  const row=getMediaById(id);
+  if(!row||row.kind!=='view-once')throw new Error('captura não encontrada. Veja `.vo list`.');
+  if(!existsSync(row.file_path))throw new Error('o arquivo dessa captura não existe mais.');
+  const buffer=await openSecureFile(row.file_path);
+  const stored=getStoredMessage({remoteJid:row.remote_jid,id:row.message_id});
+  const r=stored?resolveViewOnce(stored):{};
+  const node=r.mediaNode||{};
+  const sn=r.mediaType?{type:r.mediaType,...node}:sniffMedia(buffer);
+  const type=r.mediaType||sn.type;
+  const env=getStoredEnvelope(row.remote_jid,row.message_id);
+  const text=captureCard({type,sender:env?.sender_name||String(row.remote_jid).split('@')[0],chat:chatKind(row.remote_jid),chatLabelText:chatLabel({key:{remoteJid:row.remote_jid}}),ts:env?.ts||row.created_at,bytes:buffer.length,caption:node.caption,id:row.id});
+  await sendMedia(sock,dest,type,r.mediaType?node:sn,buffer,text,`view-once-${row.id}.bin`);
+  return true;
+}
+
+const notified=new Set();
+/** Avisa (uma vez) quando não foi possível capturar. */
+export async function notifyCaptureFailure(sock,msg){
+  const key=keyOf(msg);if(notified.has(key)||completed.has(key)||mediaForMessageKind(msg.key.remoteJid,msg.key.id,'view-once'))return;notified.add(key);if(notified.size>2000)notified.delete(notified.values().next().value);
+  const r=resolveViewOnce(msg.message||{});
+  try{await sock.sendMessage(ownerJid(sock),{text:card('👁️ *NÃO CONSEGUI CAPTURAR*',[`👤 ${senderName(msg)}`,`💬 ${chatKind(msg.key.remoteJid)} · ${chatLabel(msg)}`,`🕒 ${formatDate(msg.messageTimestamp)}`,r.mediaType?typeLabel(r.mediaType):''],{body:'O WhatsApp não entregou a mídia a este dispositivo.\nSe o remetente ainda tiver a mensagem, tente `.o` respondendo ela.'})});}catch{}
 }
 
 function enabled(){const v=dbGet('feature.viewonce');return v==null?CONFIG.VIEW_ONCE_AUTO:v==='1';}
@@ -144,7 +224,7 @@ export async function captureViewOnce(sock,msg,{manual=false}={}){
 export function scheduleViewOnceRetry(sock,msg){
   const key=keyOf(msg);if(!key||pending.has(key))return;
   const entry={tries:0,timer:null};pending.set(key,entry);
-  const tick=async()=>{const p=pending.get(key);if(!p)return;p.tries++;const ok=await captureViewOnce(sock,msg).catch(()=>false);if(ok===true||p.tries>=CONFIG.VIEW_ONCE_RETRIES){pending.delete(key);return;}await sock.requestPlaceholderResend?.(msg.key).catch(()=>{});p.timer=setTimeout(tick,p.tries<=6?500:2500);p.timer.unref?.();};
+  const tick=async()=>{const p=pending.get(key);if(!p)return;p.tries++;const ok=await captureViewOnce(sock,msg).catch(()=>false);if(ok===true||p.tries>=CONFIG.VIEW_ONCE_RETRIES){pending.delete(key);if(ok!==true)await notifyCaptureFailure(sock,msg);return;}await sock.requestPlaceholderResend?.(msg.key).catch(()=>{});p.timer=setTimeout(tick,p.tries<=6?500:2500);p.timer.unref?.();};
   entry.timer=setTimeout(tick,180);entry.timer.unref?.();
 }
 

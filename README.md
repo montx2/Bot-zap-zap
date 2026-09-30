@@ -73,7 +73,10 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 ```text
 .menu
-.vo on|off|status
+.vo                  # painel da visualização única
+.vo on|off
+.vo list [n]         # últimas capturas
+.vo get ID           # reenvia uma captura arquivada
 .o                  # responder uma View Once para tentar recuperação manual
 .find termo
 .media
@@ -135,7 +138,7 @@ O que o motor faz por você:
 - **Pack e autor de verdade**: gravados no EXIF do WebP (em JavaScript puro, sem `webpmux`).
 - **Figurinha animada → qualquer coisa**: o FFmpeg 7.0 não lê WebP animado, então o bot decodifica e compõe os frames sozinho.
 - Reações ⏳ → (some) / ❌ na mensagem do comando, fila de uma conversão por vez (poupa o celular) e limpeza automática de temporários.
-- Ajustes por `.env`: `STICKER_PACK`, `STICKER_AUTHOR`, `STICKER_MAX_SECONDS`, `STICKER_MAX_STATIC_KB`, `STICKER_MAX_ANIMATED_KB`, `STICKER_REACT`, `STICKER_AUTO_SELF`.
+- Pack padrão: **by 𝖒𝖔𝖓𝖙𝖝2_** (sem autor, visual limpo). Ajustes por `.env`: `BOT_BRAND`, `STICKER_PACK`, `STICKER_AUTHOR`, `STICKER_MAX_SECONDS`, `STICKER_MAX_STATIC_KB`, `STICKER_MAX_ANIMATED_KB`, `STICKER_REACT`, `STICKER_AUTO_SELF`.
 
 > Quem tinha figurinhas bloqueadas (`.sticker off`) no motor antigo passa a ter o recurso liberado uma única vez na atualização; use `.sticker off` de novo se quiser bloquear.
 

@@ -3,9 +3,9 @@ import path from 'node:path';
 import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import { ownerJid } from './identity.js';
-import { extractText, getQuoted, formatDate, formatBytes, truncate, isGroupJid } from './format.js';
+import { extractText, getQuoted, formatDate, formatBytes, truncate, isGroupJid, card } from './format.js';
 import * as DB from './db.js';
-import { viewOnceEnabled,setViewOnceEnabled,captureQuotedViewOnce } from '../modules/viewonce.js';
+import { viewOnceEnabled,setViewOnceEnabled,captureQuotedViewOnce,viewOncePanel,listCaptures,sendCapture } from '../modules/viewonce.js';
 import { stickerEnabled,setStickerEnabled,stickerHelp,createSticker,takeSticker,stickerToImage,stickerInfo,setStickerAuto,stickerAutoEnabled,getPack,setPack,resetPack } from '../modules/stickers.js';
 import { saveQuotedToVault,vaultList } from '../modules/vault.js';
 import { convertQuoted } from '../modules/commandMedia.js';
@@ -19,7 +19,7 @@ import { readVaultItem } from '../modules/vault.js';
 import { openSecureFile } from './security.js';
 import { ffmpegCapabilities } from './media.js';
 
-const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n🎨 *Figurinhas* (.menu figurinha)\n.s → imagem, vídeo, GIF ou figurinha (responda ou legenda)\n.s circle | crop | full | round\n.s bw | sepia | invert | flip | blur\n.s slow | fast | rev | boomerang | 6 (segundos)\n.s 😎 | Pack | Autor\n.take Pack | Autor → troca pack da figurinha\n.toimg • .togif • .tovideo • .stickerinfo\n.sticker pack Nome | Autor\n.sticker auto on|off\n\n🎞️ *Conversores*\n.gif • .mp4 • .ptt • .mp3 • .hash → respondendo mídia\n\n👁️ *View Once*\n.vo on|off|status\n.o → tenta recuperar a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo [limite]\n.media • .links • .events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save|list|get ID\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número • .network • .patterns • .stalk número\n\n👥 *Grupos*\n.groupinfo • .admins • .tagall [texto]\n\n🛠️ *Utilidades*\n.poll pergunta | opção | opção\n.cleanlink URL\n\n📊 *Sistema*\n.stats • .health • .status • .ping • .id • .check número\n.feature [nome on|off]\n.doctor • .backup\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.`;
+const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n🎨 *Figurinhas* (.menu figurinha)\n.s → imagem, vídeo, GIF ou figurinha (responda ou legenda)\n.s circle | crop | full | round\n.s bw | sepia | invert | flip | blur\n.s slow | fast | rev | boomerang | 6 (segundos)\n.s 😎 | Pack | Autor\n.take Pack | Autor → troca pack da figurinha\n.toimg • .togif • .tovideo • .stickerinfo\n.sticker pack Nome | Autor\n.sticker auto on|off\n\n🎞️ *Conversores*\n.gif • .mp4 • .ptt • .mp3 • .hash → respondendo mídia\n\n👁️ *Visualização única*\n.vo → painel\n.vo on|off\n.vo list • .vo get ID\n.o → recupera a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo [limite]\n.media • .links • .events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save|list|get ID\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número • .network • .patterns • .stalk número\n\n👥 *Grupos*\n.groupinfo • .admins • .tagall [texto]\n\n🛠️ *Utilidades*\n.poll pergunta | opção | opção\n.cleanlink URL\n\n📊 *Sistema*\n.stats • .health • .status • .ping • .id • .check número\n.feature [nome on|off]\n.doctor • .backup\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.\n\n_${CONFIG.BRAND}_`;
 
 const send=async(sock,jid,c)=>{if(typeof sock.waitForSocketOpen==='function')await sock.waitForSocketOpen();return sock.sendMessage(jid,c);};
 
@@ -30,8 +30,17 @@ export async function handleCommand(sock,msg){if(!msg?.key?.fromMe)return false;
   case 'id':await send(sock,jid,{text:`🆔 ${jid}`});break;
   case 'status':await send(sock,jid,{text:statusText(sock)});break;
   case 'health':await send(sock,jid,{text:healthText(sock)});break;
-  case 'viewonce':case'vo':{const a=(args[0]||'').toLowerCase();if(a==='on'){setViewOnceEnabled(true);await send(sock,jid,{text:'👁️ View Once: ✅ AUTO ON'});}else if(a==='off'){setViewOnceEnabled(false);await send(sock,jid,{text:'👁️ View Once: 🔒 OFF'});}else if(a==='status'){await send(sock,jid,{text:`👁️ View Once: ${viewOnceEnabled()?'✅ ON':'🔒 OFF'}`});}else{const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:'👁️ Não encontrei uma Visualização única recuperável na mensagem citada.'});}break;}
-  case 'o':case'reveal':case'0':{const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:'👁️ Falha ao recuperar a mensagem citada.'});break;}
+  case 'viewonce':case'vo':{
+    const a=(args[0]||'').toLowerCase();
+    if(a==='on'){setViewOnceEnabled(true);await send(sock,jid,{text:card('👁️ *VISUALIZAÇÃO ÚNICA*',['Modo automático: ✅ *ligado*','Tudo que chegar será capturado e enviado pro seu privado.'])});}
+    else if(a==='off'){setViewOnceEnabled(false);await send(sock,jid,{text:card('👁️ *VISUALIZAÇÃO ÚNICA*',['Modo automático: 🔒 *desligado*','Você ainda pode usar `.o` respondendo uma mensagem.'])});}
+    else if(a==='status'||a==='panel'||a==='painel'){await send(sock,jid,{text:viewOncePanel()});}
+    else if(a==='list'||a==='lista'||a==='ls'){await send(sock,jid,{text:listCaptures(Number(args[1])||10)});}
+    else if(a==='get'||a==='id'){if(!args[1])throw new Error('use `.vo get ID` (veja `.vo list`)');await sendCapture(sock,jid,args[1]);}
+    else if(getQuoted(msg)){const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:card('👁️ *NÃO ENCONTREI*',['Essa mensagem não tem uma visualização única recuperável.'])});}
+    else await send(sock,jid,{text:viewOncePanel()});
+    break;}
+  case 'o':case'reveal':case'0':{const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:card('👁️ *FALHA AO RECUPERAR*',['Responda a mensagem de visualização única com `.o`.','Se já abriu no celular, o WhatsApp pode não entregar mais a mídia.'])});break;}
   case 'sticker':case'sticke':case's':case'fig':case'figurinha':case'stk':{
     const a=(args[0]||'').toLowerCase();
     if(a==='on'){setStickerEnabled(true);await send(sock,jid,{text:'🎨 Stickers: ✅ LIBERADOS'});}
@@ -95,7 +104,7 @@ export async function handleCommand(sock,msg){if(!msg?.key?.fromMe)return false;
  }catch(e){logger.error({cmd,err:e.message},'command failed');await send(sock,jid,{text:`❌ ${e.message}`}).catch(()=>{});return true;}}
 
 async function exportChat(sock,jid,limit){const rows=DB.exportRows(jid,limit);if(!rows.length)throw new Error('chat sem mensagens arquivadas');await fs.mkdir(CONFIG.EXPORT_DIR,{recursive:true});const file=path.join(CONFIG.EXPORT_DIR,`chat-${jid.replace(/[^a-zA-Z0-9_-]/g,'_')}-${Date.now()}.txt`);let out=`BOT-ZAP SUPREMO\nChat: ${jid}\nMensagens: ${rows.length}\n\n`;for(const r of rows)out+=`[${formatDate(r.ts)}] ${r.from_me?'EU':r.sender_name||r.sender_jid||'?'}: ${r.text||`[${r.type||'mídia'}]`}\n`;await fs.writeFile(file,out);const body=await fs.readFile(file);await send(sock,jid,{document:body,fileName:path.basename(file),mimetype:'text/plain',caption:`📤 Exportação • ${rows.length} mensagens`});}
-function statusText(sock){return`⚙️ *STATUS*\nWhatsApp: ${sock?.user?'✅ conectado':'❌ offline'}\nView Once: ${viewOnceEnabled()?'✅':'🔒'}\nStickers: ${stickerEnabled()?'✅':'🔒'}\nAnti-delete: ${isFeatureOn('antidelete')?'✅':'🔒'}\nAnti-edit: ${isFeatureOn('antiedit')?'✅':'🔒'}\nMídia: ${isFeatureOn('media')?'✅':'🔒'}\nStatus Saver: ${isFeatureOn('status')?'✅':'🔒'}\nEventos: ${isFeatureOn('events')?'✅':'🔒'}`;}
+function statusText(sock){const on=v=>v?'✅':'🔒';return card('⚙️ *STATUS*',[`WhatsApp: ${sock?.user?'✅ conectado':'❌ offline'}`,`Visualização única: ${on(viewOnceEnabled())}`,`Figurinhas: ${on(stickerEnabled())}`,`Anti-delete: ${on(isFeatureOn('antidelete'))} • Anti-edit: ${on(isFeatureOn('antiedit'))}`,`Mídia: ${on(isFeatureOn('media'))} • Status saver: ${on(isFeatureOn('status'))}`,`Eventos: ${on(isFeatureOn('events'))}`]);}
 async function sendMediaRow(sock,jid,row,b){const name=path.basename(row.file_path);return send(sock,jid,{document:b,fileName:name,mimetype:row.mime||'application/octet-stream',caption:`💾 Mídia #${row.id} • ${row.kind} • ${formatBytes(row.bytes)}`});}
 function healthText(sock){const m=process.memoryUsage();return`🩺 *HEALTH*\nUptime: ${Math.floor(process.uptime())}s\nRSS: ${Math.round(m.rss/1048576)} MB\nHeap: ${Math.round(m.heapUsed/1048576)} MB\nNode: ${process.version}\nWhatsApp: ${sock?.user?'OPEN':'DOWN'}\nDB: ${DB.stats().messages} mensagens`;
 }

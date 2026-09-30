@@ -1,4 +1,5 @@
 import { jidNormalizedUser } from '@whiskeysockets/baileys';
+import { CONFIG } from './config.js';
 
 export const MEDIA_TYPES = ['imageMessage','videoMessage','audioMessage','documentMessage','stickerMessage'];
 export const MEDIA_LABEL = {
@@ -76,3 +77,16 @@ export function getMediaNode(raw){ const u=unwrap(raw); if(!u.mediaType)return n
 export function isSelfChat(sock,jid){ try{return normalizeNumber(jid)===normalizeNumber(sock?.user?.id)}catch{return false;} }
 export function normalizeJid(jid){ try{return jidNormalizedUser(jid);}catch{return jid;} }
 export function safeFileName(s,fallback='arquivo'){ return String(s||fallback).replace(/[<>:"/\\|?*\x00-\x1F]/g,'_').replace(/\s+/g,' ').trim().slice(0,100)||fallback; }
+
+export const CARD_LINE = '┄┄┄┄┄┄┄┄┄┄┄┄┄┄';
+/**
+ * Cartão padrão do bot (visual limpo e consistente).
+ * card('👁️ *VISUALIZAÇÃO ÚNICA*', ['👤 Ana','🕒 12:05'], { body:'legenda', footer:true })
+ */
+export function card(title, rows = [], { body = '', footer = true } = {}) {
+  const parts = [title, CARD_LINE, ...rows.filter(Boolean)];
+  if (body) parts.push('', body);
+  if (footer && CONFIG.BRAND) parts.push(CARD_LINE, `_${CONFIG.BRAND}_`);
+  return parts.join('\n');
+}
+export function chatKind(jid) { return isGroupJid(jid) ? 'Grupo' : 'Privado'; }
