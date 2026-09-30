@@ -264,6 +264,7 @@ export async function startClient(handlers = {}) {
   let pairingStarted = false;
   function triggerPairing() {
     if (pairingStarted || state.creds.registered) return;
+    pairingStarted = true;
     (async () => {
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (stopping || socket !== clientSocket || state.creds.registered) return;
