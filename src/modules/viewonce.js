@@ -149,7 +149,7 @@ export function viewOncePanel(){
     `Capturas: *${countMediaByKind('view-once')}* · hoje *${countMediaByKind('view-once',day.getTime())}*`,
     `Última: ${last?formatDate(last.created_at):'—'}`,
     'Armazenamento: 🔐 cifrado (AES-256)'
-  ],{body:'`.vo on|off` liga/desliga\n`.vo list` últimas capturas\n`.vo get ID` reenvia uma captura\n`.o` responda uma view once para recuperar'});
+  ],{body:'`.vo on|off` liga/desliga\n`.vo list` últimas capturas\n`.vo get ID` reenvia uma captura\n`.o` ou `.wow` (respondendo a mensagem) recupera'});
 }
 
 /** Reenvia uma captura arquivada (cifrada) para `dest`. */
@@ -185,7 +185,7 @@ export async function captureViewOnce(sock,msg,{manual=false}={}){
   if(!msg?.message||!msg.key?.remoteJid||!msg.key?.id)return null;
   if(!manual&&!enabled())return null;
   if(!manual&&msg.key.fromMe)return null;
-  const key=keyOf(msg); if(completed.has(key)||inFlight.has(key))return false; inFlight.add(key);
+  const key=keyOf(msg); if((!manual&&completed.has(key))||inFlight.has(key))return false; inFlight.add(key); // manual (.o/.wow) sempre pode reenviar do arquivo
   return queues.run(msg.key.remoteJid,async()=>{
     try{
       const archived=mediaForMessageKind(msg.key.remoteJid,msg.key.id,'view-once');

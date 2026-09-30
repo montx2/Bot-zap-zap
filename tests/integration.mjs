@@ -263,6 +263,14 @@ ST.setStickerAuto(false);
   n=sent.length; await cmd(`.vo get ${row.id}`); assert.ok(sent.slice(n).some(x=>x.content?.image));
   await cmd('.vo get'); assert.match(sent.at(-1).content.text,/❌/);
   await cmd('.vo off'); assert.match(sent.at(-1).content.text,/desligado/); await cmd('.vo on'); assert.match(sent.at(-1).content.text,/ligado/);
+  // .Wow (qualquer caixa) recupera a view once citada, igual ao .o
+  globalThis.__MOCK_MEDIA_BUFFER=png;
+  const wq=baseMsg('vo-wow',vo('imageMessage'),false,'5511944444444@s.whatsapp.net'); archiveIncoming(wq);
+  for(const t of ['.Wow','.wow','.WOW']){
+    n=sent.length;
+    await handleCommand(sock,baseMsg(`wow-${t}`,{extendedTextMessage:{text:t,contextInfo:{stanzaId:'vo-wow',participant:'5511944444444@s.whatsapp.net',quotedMessage:wq.message}}},true,'5511944444444@s.whatsapp.net'));
+    assert.ok(sent.slice(n).some(x=>x.jid===owner&&x.content?.image),`${t} deve enviar a captura pro privado`);
+  }
   await cmd('.status'); assert.match(sent.at(-1).content.text,/STATUS/);
   ST.resetPack(); assert.equal(ST.getPack(sock).pack,CONFIG.BRAND); assert.equal(ST.getPack(sock).author,'');
 }
