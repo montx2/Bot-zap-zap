@@ -229,6 +229,40 @@ export function filterVariants(opts, ctx) {
 /** true quando o formato pedido significa "ocupar o quadradinho inteiro". */
 const wantsFill = (o) => FILL_FITS.has(o.fit);
 
+/** Duração na ENTRADA que um degrau da escada consome (speed/boomerang/cut). */
+function stepInSeconds(s, seconds, opts) {
+  let d = (seconds * (s.cut || 1)) * (opts.speed || 1);
+  if (opts.boomerang) d /= 2;
+  return d;
+}
+
+/**
+ * Sonda rápida: codifica um trecho curto em cada degrau candidato para estimar
+ * os bytes por segundo e escolher direto o degrau que deve caber. Sem isso, o
+ * caminho animado codifica o vídeo INTEIRO 3-4 vezes até acertar o tamanho
+ * (era o gargalo de tempo do bot: ~8 s numa figurinha de 10 s).
+ * @returns {number} índice do degrau escolhido (0 = melhor qualidade)
+ */
+async function calibrate(input, dir, steps, seconds, maxBytes, opts, trim) {
+  const probe = Math.max(0.5, Math.min(1.2, seconds / 4));
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    const out = path.join(dir, `probe-${i}.webp`);
+    const vf = buildFilter(opts, { animated: true, fps: s.fps, trim });
+    const probeIn = stepInSeconds(s, probe, opts);
+    try {
+      await runFfmpeg(['-t', probeIn.toFixed(2), '-i', input, '-vf', vf, '-an', '-sn',
+        '-c:v', 'libwebp', '-lossless', '0', '-q:v', String(s.q), '-compression_level', '4',
+        '-preset', 'default', '-y', out], { timeoutMs: 60_000 });
+      const size = (await readFile(out)).length;
+      // Tamanho cresce ~linear com a duração de entrada deste degrau.
+      const estimated = size * (stepInSeconds(s, seconds, opts) / probeIn);
+      if (estimated <= maxBytes * 0.92) return i;
+    } catch { return 0; }   // sonda falhou: deixa a escada normal tocar o serviço
+  }
+  return steps.length - 1;  // nenhum deve caber: começa pelo mais agressivo
+}
+
 /** Codifica `input` em WebP respeitando o limite de tamanho (adaptativo). */
 async function encode(input, dir, { animated, opts, seconds, trim = null }) {
   const maxBytes = (animated ? CONFIG.STICKER_MAX_ANIMATED_KB : CONFIG.STICKER_MAX_STATIC_KB) * 1024;
@@ -237,13 +271,19 @@ async function encode(input, dir, { animated, opts, seconds, trim = null }) {
   let best = null;
   let attempts = 0;
   let lastErr = null;
-  for (let i = 0; i < steps.length;) {
+  // Só calibra quando pagar: vídeo longo o bastante para justificar a sonda.
+  let start = 0;
+  if (animated && seconds >= 3 && opts.quality !== 'lq') {
+    try { start = await calibrate(input, dir, steps, seconds, maxBytes, opts, trim); }
+    catch { start = 0; }
+    logger.debug({ start, steps: steps.length }, 'calibração de qualidade da figurinha animada');
+  }
+  for (let i = start; i < steps.length;) {
     const s = steps[i];
     attempts++;
     const out = path.join(dir, `try-${attempts}.webp`);
     // Duração na ENTRADA (antes de speed/boomerang mudarem o tempo final).
-    let inSeconds = (seconds * (s.cut || 1)) * (opts.speed || 1);
-    if (opts.boomerang) inSeconds /= 2;
+    let inSeconds = stepInSeconds(s, seconds, opts);
     const head = [];
     if (animated) head.push('-t', inSeconds.toFixed(2));
     head.push('-i', input);
