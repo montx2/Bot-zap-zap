@@ -1,0 +1,14 @@
+node_modules/
+.env
+.data-local/
+data/*.db*
+data/auth/
+data/vault.key
+logs/*.log
+.tmp/
+storage/media/*
+storage/vault/*
+storage/black/*
+storage/status/*
+storage/exports/*
+storage/backups/*
