@@ -1,17 +1,61 @@
+// 🩺 Doctor: verifica o ambiente antes de rodar o NEXUS.
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
-const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const dirs=['data','data/auth','logs','storage','storage/media','storage/vault','storage/black','storage/status','storage/exports','storage/backups','.tmp'];
-console.log('🔎 Bot-Zap Supremo Doctor');console.log(`📍 ${root}`);console.log(`📦 Node: ${process.version}`);
-const major=Number(process.versions.node.split('.')[0]);if(major<24){console.log('❌ Node 24+ é obrigatório.');process.exitCode=1;}
-for(const d of dirs){const p=path.join(root,d);if(!fs.existsSync(p))fs.mkdirSync(p,{recursive:true});}
-const ff=spawnSync('ffmpeg',['-version'],{stdio:'ignore'});console.log(ff.status===0?'🎞️ FFmpeg: OK':'⚠️ FFmpeg não encontrado (pkg install ffmpeg)');
-if(ff.status===0){const enc=spawnSync('ffmpeg',['-hide_banner','-encoders'],{encoding:'utf8'}).stdout||'';for(const [codec,what] of [['libwebp','figurinhas'],['libx264','.gif/.mp4'],['libopus','.ptt'],['libmp3lame','.mp3']])console.log(new RegExp(`\\b${codec}\\b`).test(enc)?`   ✅ ${codec} (${what})`:`   ⚠️ ${codec} ausente — ${what} não vão funcionar`);}
-console.log(fs.existsSync(path.join(root,'data','pairing-number.txt'))?'🔐 Número de pareamento: configurado':'ℹ️ Número de pareamento: ainda não configurado');
-console.log(fs.existsSync(path.join(root,'data','auth','creds.json'))?'🔗 Sessão: encontrada':'🔗 Sessão: ainda não pareada');
-{const df=spawnSync('df',['-Pk',root],{encoding:'utf8'});const free=Number((df.stdout||'').trim().split('\n').pop()?.split(/\s+/)[3])*1024;if(free){const gb=free/1024**3;console.log(gb<1?`⚠️ Pouco espaço livre: ${gb.toFixed(2)} GB (mídias e cofre ocupam disco)`:`💾 Espaço livre: ${gb.toFixed(1)} GB`);}}
-console.log(spawnSync('sh',['-c','command -v termux-wake-lock'],{stdio:'ignore'}).status===0?'🔋 termux-wake-lock: OK (bot fica vivo com a tela apagada)':'ℹ️ Instale `pkg install termux-api` (+ app Termux:API) para o bot usar wake-lock e não ser morto pelo Android.');
-console.log(fs.existsSync(path.join(root,'.env'))?'⚙️ .env: carregado':'ℹ️ Sem .env — usando padrões (copie .env.example para .env para personalizar).');
-console.log('✅ Estrutura Termux verificada.');
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const ok = (m) => console.log(`✅ ${m}`);
+const warn = (m) => console.log(`⚠️ ${m}`);
+const bad = (m) => console.log(`❌ ${m}`);
+
+console.log('\n🩺 NEXUS DOCTOR\n');
+
+// Node
+const major = Number(process.versions.node.split('.')[0]);
+if (major >= 20) ok(`Node ${process.version}`);
+else bad(`Node ${process.version} — precisa do Node 20+ (pkg install nodejs-lts)`);
+
+// FFmpeg
+const ff = spawnSync(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg', ['-version'], { timeout: 8000 });
+if (ff.status === 0) ok('FFmpeg instalado');
+else bad('FFmpeg ausente — figurinhas e conversões precisam dele.\n   Termux: pkg install ffmpeg · Linux: apt install ffmpeg · Windows: winget install ffmpeg');
+
+// Dependências
+if (fs.existsSync(path.join(ROOT, 'node_modules', '@whiskeysockets', 'baileys'))) ok('Dependências npm instaladas');
+else bad('Dependências ausentes — rode: npm install');
+
+// .env
+const envFile = path.join(ROOT, '.env');
+if (fs.existsSync(envFile)) {
+  ok('.env presente');
+  const env = fs.readFileSync(envFile, 'utf8');
+  const keys = {
+    REMOVE_BG_KEYS: 'remoção de fundo (remove.bg)',
+    GEMINI_KEYS: 'IA Gemini',
+    OPENAI_KEYS: 'IA OpenAI',
+    GROQ_KEYS: 'IA Groq',
+    COBALT_INSTANCES: 'downloads universais (Cobalt)'
+  };
+  for (const [key, label] of Object.entries(keys)) {
+    const line = env.split('\n').find((l) => l.startsWith(key + '='));
+    const value = line ? line.slice(key.length + 1).trim() : '';
+    if (value) ok(`${label}: configurado (${value.split(',').length} item(ns))`);
+    else warn(`${label}: vazio — funciona sem, mas leia o README para ativar ${label}`);
+  }
+} else {
+  warn('.env ausente — copie o .env.example para .env e preencha (opcional mas recomendado)');
+}
+
+// Sessão
+const authDir = path.join(ROOT, 'data', 'auth');
+if (fs.existsSync(path.join(authDir, 'creds.json'))) ok('Sessão WhatsApp salva (já pareado)');
+else console.log('ℹ️ Sem sessão ainda — no primeiro start o bot pede pareamento.');
+
+// Plataforma
+if (process.env.TERMUX_VERSION || String(process.env.HOME || '').includes('com.termux')) {
+  ok('Termux detectado — pareamento será por CÓDIGO (sem QR Code) ✔️');
+} else {
+  console.log(`ℹ️ Plataforma: ${process.platform} — QR Code habilitado no terminal`);
+}
+
+console.log('\n✨ Diagnóstico concluído.\n');

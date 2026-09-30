@@ -1,55 +1,77 @@
-import pino from 'pino';
-import { CONFIG } from './config.js';
+// Logger de console bonito e leve (zero dependências).
 
-export const logger = pino({
-  level: CONFIG.LOG_LEVEL,
-  base: null,
-  timestamp: pino.stdTimeFunctions.isoTime,
-  redact: {
-    paths: ['msg.key', 'key', 'remoteJid', 'participant', 'jid', 'message'],
-    censor: '[redacted]'
+const COLORS = {
+  reset: '\x1b[0m',
+  dim: '\x1b[2m',
+  bold: '\x1b[1m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  gray: '\x1b[90m'
+};
+
+const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+const c = (color, text) => (useColor ? `${COLORS[color]}${text}${COLORS.reset}` : text);
+
+function stamp() {
+  return c('gray', new Date().toLocaleTimeString('pt-BR', { hour12: false }));
+}
+
+function fmt(extra) {
+  if (extra === undefined || extra === null) return '';
+  if (typeof extra === 'string') return ` ${extra}`;
+  if (extra instanceof Error) return ` ${extra.message}`;
+  try {
+    return ` ${c('gray', JSON.stringify(extra))}`;
+  } catch {
+    return '';
   }
-});
+}
 
-export function consoleLog(text) { process.stdout.write(`${text}\n`); }
+export const log = {
+  info: (msg, extra) => console.log(`${stamp()} ${c('cyan', 'ℹ')} ${msg}${fmt(extra)}`),
+  ok: (msg, extra) => console.log(`${stamp()} ${c('green', '✔')} ${msg}${fmt(extra)}`),
+  warn: (msg, extra) => console.log(`${stamp()} ${c('yellow', '⚠')} ${msg}${fmt(extra)}`),
+  error: (msg, extra) => console.log(`${stamp()} ${c('red', '✖')} ${msg}${fmt(extra)}`),
+  cmd: (msg, extra) => console.log(`${stamp()} ${c('magenta', '⌨')} ${msg}${fmt(extra)}`),
+  dl: (msg, extra) => console.log(`${stamp()} ${c('blue', '⬇')} ${msg}${fmt(extra)}`),
+  ai: (msg, extra) => console.log(`${stamp()} ${c('magenta', '🧠')} ${msg}${fmt(extra)}`),
+  raw: (msg) => console.log(msg)
+};
 
-function searchableArgs(args) {
-  return args.map((value) => {
-    if (typeof value === 'string') return value;
-    try { return JSON.stringify(value); } catch { return String(value); }
-  }).join(' ');
+export function banner(lines) {
+  const border = c('cyan', '╔' + '═'.repeat(58) + '╗');
+  const footer = c('cyan', '╚' + '═'.repeat(58) + '╝');
+  console.log(border);
+  for (const line of lines) {
+    const pad = Math.max(0, 58 - stripAnsi(line).length);
+    console.log(c('cyan', '║ ') + line + ' '.repeat(pad) + c('cyan', '║'));
+  }
+  console.log(footer);
+}
+
+function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;]*m/g, '');
 }
 
 /**
- * Baileys logs some transport failures without emitting connection.close.
- * The wrapper lets connection.js turn the specific init-query timeout into a
- * controlled socket restart instead of leaving a dead session running forever.
+ * Logger silencioso compatível com pino — para entregar ao Baileys sem
+ * despejar logs internos no terminal (o NEXUS loga o que importa).
  */
-export function createBaileysLogger(onTransportProblem, onDecryptFailure) {
-  const wrap = (target) => new Proxy(target, {
-    get(obj, prop) {
-      if (prop === 'child') {
-        return (bindings, options) => wrap(obj.child(bindings, options));
-      }
-
-      const value = obj[prop];
-      if (typeof value !== 'function') return value;
-
-      return (...args) => {
-        // Falha de descriptografia (Bad MAC / sem sessão): a chave crua ainda está aqui, antes do redact do pino.
-        if (prop === 'error' && onDecryptFailure && args[1] === 'failed to decrypt message') {
-          try { onDecryptFailure({ key: args[0]?.key, error: String(args[0]?.err?.message || args[0]?.err || '') }); } catch {}
-        }
-        if (prop === 'error' || prop === 'warn') {
-          const text = searchableArgs(args);
-          if (/unexpected error in ['\"]init queries['\"]|executeInitQueries|fetchProps.*Timed Out|init queries.*Timed Out/i.test(text)) {
-            try { onTransportProblem?.({ type: 'init-queries-timeout', text }); } catch {}
-          }
-        }
-        return value.apply(obj, args);
-      };
-    }
-  });
-
-  return wrap(logger.child({ component: 'baileys' }));
-}
+export const baileysLogger = (() => {
+  const noop = () => {};
+  const self = {
+    level: 'silent',
+    child: () => self,
+    trace: noop,
+    debug: noop,
+    info: noop,
+    warn: noop,
+    error: noop,
+    fatal: noop
+  };
+  return self;
+})();

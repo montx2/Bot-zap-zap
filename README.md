@@ -1,206 +1,209 @@
-# BOT-ZAP SUPREMO
+# ⚡ NEXUS BOT
 
-Bot pessoal WhatsApp para Termux, sem painel web, sem Windows, sem IA obrigatória e sem banco externo. A prioridade do projeto é a captura/arquivo local de mensagens e mídia, com View Once como motor principal.
+**O bot de WhatsApp mais completo da sua vida.** Multi-Device (Baileys), feito para
+**Termux** (pareamento por código, sem QR), e também roda em **Linux** e **Windows** (com QR).
 
-## Núcleo
+Tudo que importa, nada que atrapalha:
 
-- View Once automática com múltiplas estratégias e fallback.
-- Arquivo de mensagens e mídia local em SQLite + armazenamento cifrado.
-- Anti-delete e histórico de edição do que já chegou à sessão.
-- Detectores de encaminhamento, localização, contatos, enquetes, comércio, reações e eventos.
-- Radar de grupos, administradores, mudanças de participantes e mapa de grupos dos alvos monitorados.
-- Monitor de reações, presença, recibos, chamadas e mudança de dispositivo.
-- Profile checker e alertas inteligentes por horário configurado.
-- Histórico de links e limpeza de parâmetros de rastreamento.
-- Cofre normal + Black Vault.
-- Status saver opcional e limitado à lista de alvos.
-- **Sticker Engine 2.0**: figurinhas de imagem, vídeo, GIF e de outras figurinhas, com pack/autor, formatos, efeitos e compressão adaptativa (veja abaixo).
-- Conversores FFmpeg: GIF, MP4, PTT, MP3, figurinha → imagem/GIF/vídeo.
-- Hash SHA-256, exportação de conversa, backups e doctor.
-- Busca unificada `.find` em mensagens, links, mídias e eventos.
-- Comandos administrativos aceitos somente de mensagens enviadas pela própria conta.
+| Recurso | Descrição |
+|---|---|
+| 👁️ **View Once** | Captura automática + **responda QUALQUER view once com QUALQUER mensagem** e ela é baixada |
+| 🛡️ **Anti-Delete** | **Ligado em tudo por padrão**, com filtro de ignorar (grupos, privado, chats específicos) |
+| 🖼️ **Figurinhas** | Imagem, vídeo, GIF e figurinha→figurinha, **com remoção de fundo por IA** |
+| 🎭 **Remoção de fundo** | Pool de APIs com várias contas girando (estilo "requisições ilimitadas") |
+| 🧠 **IA completa** | Chat, geração de imagens, voz, tradução e resumo — com pool de chaves + fallback grátis |
+| ⬇️ **Downloader universal** | Pinterest, TikTok, Instagram, YouTube, X, Facebook, Threads, Reddit e +200 sites |
+| 🎚️ **Qualidade** | Sempre a **MELHOR por padrão**; peça `baixa` para reduzir |
+| 🎨 **Menu limpo** | `.menu` bonito e direto, qualquer pessoa entende |
 
-## O que não está incluído
+---
 
-Não foram incluídos os módulos pedidos para remoção: Inbox, Notas e Lembretes/Tarefas. Também não há painel web, PM2, Chromium, scripts Windows ou serviços pagos.
+## 🚀 Instalação rápida
 
-## Conexão resiliente
-
-A conexão consulta a revisão atual do WhatsApp Web antes de criar o socket, guarda a última revisão válida localmente e usa fallback apenas quando necessário. Isso evita o loop de `405` causado por versões WA Web desatualizadas no Baileys. O override manual opcional é `WA_VERSION_OVERRIDE=2,3000,REVISAO`.
-
-## Testes locais
+### 📱 Termux (recomendado)
 
 ```bash
-npm test
-npm run integration-test
-npm run connection-test   # simula queda, conflito e auto-cura de sessão
+pkg update -y && pkg upgrade -y
+pkg install -y git nodejs-lts ffmpeg
+git clone https://github.com/montx2/Bot-zap-zap.git
+cd Bot-zap-zap
+./install-termux.sh        # instala tudo
+./bot.sh pair 55SEUNUMERO  # salva seu número (sem QR no Termux!)
+./bot.sh start             # mostra o código de 8 letras
 ```
 
-O teste de integração usa mocks locais e FFmpeg; ele não substitui um teste real de conexão com o WhatsApp.
+No WhatsApp: **Dispositivos conectados → Conectar com número de telefone** → digite o código.
 
-## Requisitos
+> 💡 Precisa manter o Termux vivo? Rode `termux-wake-lock` antes do `./bot.sh start`.
 
-- Termux atualizado.
-- Node.js 24+.
-- FFmpeg.
-- Conexão com internet durante a instalação e pareamento.
-
-## Instalação
+### 🐧 Linux
 
 ```bash
-pkg update -y
-pkg install nodejs-lts git ffmpeg unzip nano -y
-termux-setup-storage
-cd ~/storage/downloads
-unzip Bot-Zap-Supremo-2026.zip -d ~
-mv ~/Bot-Zap-Supremo-2026 ~/Bot-Zap-Supremo
-cd ~/Bot-Zap-Supremo
-npm ci
-./bot.sh doctor
-./bot.sh test
+sudo apt install nodejs npm ffmpeg   # Node 20+
+npm install
+npm start                            # escaneie o QR no terminal
 ```
 
-## Pareamento sem QR
+### 🪟 Windows
+
+1. Instale o [Node.js LTS 20+](https://nodejs.org) e FFmpeg (`winget install ffmpeg`).
+2. Dê dois cliques em `start.bat` (ele instala as dependências sozinho).
+3. Escaneie o QR Code que aparece no terminal.
+
+---
+
+## 🎮 Como usar
+
+Mande **`.menu`** no WhatsApp. Resumo:
+
+### 👁️ View Once
+- **Captura automática**: toda view once recebida é salva e enviada para você (dono).
+- **Por resposta**: responda a view once com *qualquer mensagem* (um "oi", um emoji, `.s`…) e o bot baixa na hora, no próprio chat.
+- Configurar: `.vo auto on|off` · `.vo destino dono|chat` · `.vo resposta todos|dono`
+
+### 🛡️ Anti-Delete
+Vem **ligado em todos os chats**. Quando alguém apaga, o bot restaura a mensagem ali mesmo.
+
+```
+.antidelete                    → status
+.antidelete ignorar grupos     → para de proteger grupos
+.antidelete ignorar privado    → para de proteger PVs
+.antidelete ignorar aqui       → ignora o chat atual
+.antidelete remover grupos     → volta a proteger
+.antidelete lista              → ver filtros
+.antidelete on | off           → liga/desliga global (só o dono)
+.antidelete dono               → também mandar cópia pro dono
+```
+
+### 🖼️ Figurinhas
+```
+.s / .fig / !sticker    → foto, vídeo, GIF ou figurinha → figurinha
+.sfundo                 → figurinha SEM FUNDO (IA remove o fundo)
+.fundo                  → devolve PNG transparente (sem virar figurinha)
+.take Pack|Autor        → renomear pack de figurinhas
+```
+Dica: dá pra responder uma **view once** com `.s` e transformar em figurinha. 😉
+
+### ⬇️ Downloads (sempre na melhor qualidade)
+```
+.dl <link> [qualidade]      → universal (qualquer rede)
+.tiktok <link> [qualidade]  → TikTok sem marca d'água (HD original)
+.ttmp3 <link>               → só a música do TikTok
+.pin <link> [qualidade]     → Pinterest (foto original, vídeo e GIF)
+.insta <link> [qualidade]   → Instagram (reels, posts, carrossel)
+```
+- **Qualidades**: `melhor` (padrão 👑), `alta`, `media`, `baixa` — em qualquer ordem: `.tiktok baixa <link>`
+- **Auto-download**: cole o link solto no chat que ele baixa sozinho.
+- Redes cobertas via Cobalt: YouTube, X/Twitter, Facebook, Threads, Reddit, Snapchat,
+  Vimeo, Twitch, SoundCloud e centenas de outras.
+
+### 🧠 IA
+```
+.ia <pergunta>            → conversa (com memória no chat · .ia reset limpa)
+.criar <descrição>        → gera imagem
+.voz <texto>              → áudio falando o texto
+.traduz inglês <texto>    → tradução
+.resumo <texto>           → resumão em bullets
+```
+
+---
+
+## 🔑 O sistema de POOLS (requisições "ilimitadas")
+
+A mágica do NEXUS: em vez de UMA conta/API, você configura **VÁRIAS** e o bot
+gira entre elas. Quando uma estoura o limite, ela entra em "geladeira" e a
+próxima assume. Copie `.env.example` para `.env` e preencha:
 
 ```bash
-./bot.sh pair 55DDDNUMERO
-./bot.sh start
-./bot.sh logs
+cp .env.example .env
+nano .env
 ```
 
-O número usa país + DDD + número, apenas dígitos. O código aparece no terminal.
-
-## Comandos principais
-
-Dentro do chat, `.menu` mostra tudo organizado por *o que você quer fazer* (figurinha, ver o que só aparece uma vez, transformar mídia, achar e guardar, monitorar alguém, grupo, extras) — cada linha explica o que o comando faz. `.menu figurinha` abre o guia completo de figurinhas.
-
-```text
-.menu
-.vo                  # painel da visualização única
-.vo on|off
-.vo list [n]         # últimas capturas
-.vo get ID           # reenvia uma captura arquivada
-.o                  # responder uma View Once para tentar recuperação manual
-.find termo
-.media
-.links
-.events
-.save                # guardar a mensagem citada no cofre
-.black save|list|get ID
-.s                   # figurinha (responde ou legenda) — imagem inteira, sem cortar
-.gif | .mp4 | .ptt | .mp3   # responder mídia
-.toimg | .take | .stickerinfo   # veja a seção Figurinhas
-.hash
-.watch add número nome
-.watch hours número 8 9 10 11
-.watch rm número
-.watch list
-.profile número
-.network
-.patterns
-.stalk número
-.groupinfo
-.admins
-.tagall texto
-.stats
-.analytics
-.export [limite]
-.backup
-.health
-.status
+### 🎭 Remoção de fundo (para .sfundo / .fundo)
+Crie quantas contas grátis quiser em <https://www.remove.bg/api> (50 créditos/mês cada):
+```env
+REMOVE_BG_KEYS=chave_da_conta1,chave_da_conta2,chave_da_conta3
+```
+Alternativas:
+```env
+REMOVE_BG_URLS=https://sua-api-própria/removebg   # POST multipart campo "image"
+LOCAL_REMBG=true                                   # usa o rembg local (pip install rembg)
 ```
 
-## 🎨 Figurinhas (Sticker Engine 2.0)
+### 🧠 IA (opcional — sem nada, usa Pollinations grátis)
+```env
+GEMINI_KEYS=key1,key2        # aistudio.google.com (grátis)
+GROQ_KEYS=key1               # console.groq.com (grátis, rápido)
+OPENAI_KEYS=key1             # OpenAI
+AI_BASE_URL=https://openrouter.ai/api/v1   # qualquer API compatível com OpenAI
+AI_KEYS=key1,key2
+AI_MODEL=anthropic/claude-3.5-sonnet
+```
+Ordem de uso: suas chaves → Gemini → Groq → OpenAI → **Pollinations (grátis, sempre)**.
 
-Liberado por padrão. Responda uma mídia com `.s` — ou envie a imagem/vídeo/GIF já com `.s` na legenda. Aceita imagem, vídeo, GIF, figurinha (estática ou animada) e documento de imagem/vídeo.
-
-**A figurinha sempre mostra a imagem INTEIRA** — rosto, bicho, objeto: nada é cortado. A imagem é
-só redimensionada para caber no quadrado 512×512 e centralizada (com espacinho transparente em
-volta quando sobra). Vale para foto, vídeo, GIF, documento e figurinha: basta `.s` puro. Se você
-preferir o quadrado 100% preenchido (cortando o que sobra), escreva `.s preencher`.
-
-```text
-.s                     # padrão: imagem inteira, sem cortar (borda transparente se sobrar)
-.s inteira             # imagem inteira (mesma coisa do padrão)
-.s preencher           # quadrado 100% preenchido, cortando o que sobra
-.s esticar             # estica para 512×512
-.s circulo | .s borda  # redonda / cantos arredondados (borda suave)
-.s pretoebranco | sepia | inverter | espelho | desfoque   # efeitos (combináveis)
-.s rapido | lento | reverso | vaievem | parada            # vídeo/GIF
-.s 5                   # só os 5 primeiros segundos (1–15)
-.s qualidade | leve    # mais nítida / arquivo menor
-.s 😎 | Meu Pack | Meu Nome            # emoji + pack + autor desta figurinha
-
-.sticker pack Nome | Autor    # pack/autor padrão (reset: .sticker pack reset)
-.sticker auto on|off          # tudo que você mandar pro seu próprio chat vira figurinha
-.take Nome | Autor            # responda uma figurinha: troca o pack/autor
-.toimg [doc]                  # figurinha → imagem (doc mantém transparência)
-.togif | .tovideo             # figurinha animada → GIF / vídeo
-.stickerinfo                  # pack, autor, emojis, frames, tamanho
-.menu figurinha               # guia simples, explica cada opção
+### ⬇️ Downloads universais (Cobalt)
+O bot já vem com instâncias públicas. Para ficar 100% confiável, adicione as suas
+(veja a lista em <https://instances.cobalt.best> ou suba a sua: <https://github.com/imputnet/cobalt>):
+```env
+COBALT_INSTANCES=https://sua-instancia.cobalt,https://outra-instancia
 ```
 
-Os comandos em inglês (`crop`, `full`, `circle`, `round`, `bw`, `sepia`, `invert`, `flip`,
-`blur`, `fast`, `slow`, `rev`, `boomerang`, `static`, `hq`, `lq`) continuam funcionando.
+> 📊 Veja a saúde dos pools no WhatsApp: **`.pools`** (dono) e **`.info`**
 
-O que o motor faz por você:
+---
 
-- **Nada de corte**: por padrão a imagem inteira é dimensionada para caber no 512×512 (centralizada, com transparência em volta) — rosto, animal e objeto continuam aparecendo por completo. Quem pede `.s preencher` tem o quadrado cheio: aí sim o bot mede a caixa opaca da figurinha de entrada e recorta o excesso antes de escalar. Figurinha que já preenche vai por atalho instantâneo (só troca o pack, sem re-encode).
-- **Compressão adaptativa**: se a figurinha passa de 100 KB (estática) ou 500 KB (animada), o bot baixa qualidade/FPS/duração automaticamente até caber.
-- **Pack e autor de verdade**: gravados no EXIF do WebP (em JavaScript puro, sem `webpmux`).
-- **Figurinha animada → qualquer coisa**: o FFmpeg 7.0 não lê WebP animado, então o bot decodifica e compõe os frames sozinho.
-- **Filtros com plano B**: se o seu FFmpeg não tiver algum filtro (`geq`, `gblur`...), o bot reencoded com uma versão mais simples em vez de falhar.
-- Reações ⏳ → (some) / ❌ na mensagem do comando, fila de uma conversão por vez (poupa o celular) e limpeza automática de temporários.
-- Pack padrão: **by 𝖒𝖔𝖓𝖙𝖝2_** (sem autor, visual limpo). Ajustes por `.env`: `BOT_BRAND`, `STICKER_PACK`, `STICKER_AUTHOR`, `STICKER_MAX_SECONDS`, `STICKER_MAX_STATIC_KB`, `STICKER_MAX_ANIMATED_KB`, `STICKER_REACT`, `STICKER_AUTO_SELF`.
+## ⚙️ Comandos de configuração
 
-O formato padrão pode ser trocado no `.env` com `STICKER_FIT` (`fit` — imagem inteira, é o padrão —, `crop`, `full`, `circle` ou `round`).
-
-> Quem tinha figurinhas bloqueadas (`.sticker off`) no motor antigo passa a ter o recurso liberado uma única vez na atualização; use `.sticker off` de novo se quiser bloquear.
-
-## 🔧 Uso 24h no Termux (1 aparelho)
-
-- **`.env` agora é lido de verdade.** Copie `cp .env.example .env` e edite (antes as variáveis eram ignoradas).
-- **Wake-lock:** `pkg install termux-api` (e o app *Termux:API*). O supervisor usa `termux-wake-lock` para o Android não matar o bot com a tela apagada. Desative a otimização de bateria do Termux nas configurações do Android.
-- **Manutenção automática diária** (ou `.clean` na hora): compacta mensagens antigas (`KEEP_RAW_DAYS`), expira mídias comuns (`MEDIA_KEEP_DAYS`, teto `MEDIA_MAX_GB`), poda eventos antigos, rotaciona o log (`LOG_MAX_MB`) e limpa temporários. **View Once e cofre nunca são apagados.**
-- **Backup** (`./bot.sh backup` / `.backup`): não inclui backups anteriores e mantém só os 5 mais recentes.
-- **Comandos antigos não reexecutam:** mensagens com mais de 2 min entregues em lote após uma queda de internet não disparam comandos.
-- **Sessão encerrada pelo WhatsApp:** o bot avisa no log e para (em vez de ficar em loop). Re-pareie: `./bot.sh stop && rm -rf data/auth && ./bot.sh pair 55DDDNUMERO && ./bot.sh start`.
-- `./bot.sh doctor` mostra FFmpeg/codecs, espaço livre, wake-lock e `.env`.
-
-## Controle de módulos
-
-```text
-.feature
-.feature viewonce on
-.feature sticker off
-.feature status on
-.feature all on
+```
+.config                       → ver tudo
+.config autoDownload false    → desligar auto-download de links
+.config qualidadePadrao media → qualidade padrão dos downloads
+.config maxMB 50              → limite de tamanho por arquivo
+.menu · .ping · .info · .doctor · .pools
 ```
 
-## Privacidade e limites
+---
 
-O bot só registra o conteúdo que a própria sessão conectada recebe. A captura de View Once depende de quais dados o WhatsApp entrega ao dispositivo companheiro; o projeto usa várias rotas de download, mas não existe garantia matemática de 100% contra mudanças do protocolo.
-
-As chaves de autenticação e `data/vault.key` são dados extremamente sensíveis. Não compartilhe a pasta `data/auth` nem o backup gerado.
-
-
-## RECUPERAÇÃO AUTOMÁTICA
-A conexão usa timeout explícito, keep-alive curto, `fireInitQueries` e recuperação automática para o erro interno de `init queries`. Um health probe periódico também detecta sessões que deixam de responder. A recuperação não apaga `data/auth`.
-
-## 🩹 Problemas de conexão: `conflict / replaced`, `Bad MAC`, figurinha lenta
-
-| Sintoma no log | Causa | O que o bot faz agora |
-| --- | --- | --- |
-| `stream:error … conflict … replaced` em loop (a cada ~6 s) | **Duas cópias** do bot usando a mesma sessão (ex.: `./bot.sh start` + `npm start`) — uma derruba a outra | Trava de instância única (`data/bot.lock`): a 2ª cópia avisa e sai. Se o conflito vier de outro aparelho, o bot espera 15 s → 30 s → … (máx. 5 min) em vez de brigar |
-| `Bad MAC` / `No matching sessions found` | Chaves de criptografia corrompidas (normalmente consequência das duas cópias acima) | Se o mesmo contato falha 2× em 15 min, só a sessão dele é apagada e recriada sozinha |
-| Comando/figurinha demora | Comando ficava na fila atrás do arquivamento; chaves lidas do disco a cada mensagem | Comandos saem em fila própria; chaves em cache na memória; redimensionamento mais leve |
-
-Se ainda aparecer `Bad MAC` depois de garantir **uma única cópia**:
+## 🧪 Testes
 
 ```bash
-./bot.sh stop      # para TODAS as cópias (supervisor e `npm start` manual)
-./bot.sh repair    # limpa só as sessões por contato (faz backup; não precisa parear de novo)
-./bot.sh start
+npm test          # 36 testes offline (lógica, roteamento, anti-delete, view once)
+npm run doctor    # diagnóstico do ambiente
 ```
 
-Sempre use `./bot.sh restart` para reiniciar — nunca abra `npm start` enquanto o supervisor estiver ativo.
+## 🩺 Problemas comuns
+
+| Sintoma | Solução |
+|---|---|
+| QR não aparece no Termux | Normal! Termux usa código: `./bot.sh pair SEUNUMERO` |
+| Código de pareamento não aparece | Confira o número: só dígitos, com DDI (ex. 55…) |
+| Loop de 405 ao conectar | O bot já faz cache da versão do WA Web; se persistir: `WA_VERSION_OVERRIDE=2,3000,REVISAO` |
+| Figurinha não sai | Falta FFmpeg: `pkg install ffmpeg` / `apt install ffmpeg` / `winget install ffmpeg` |
+| `.sfundo` pede configuração | Coloque chaves em `REMOVE_BG_KEYS` no `.env` |
+| Download do Instagram falha | IG bloqueia muitos IPs; o bot tenta 3 estratégias — tente de novo ou use `.dl` |
+| Bot cai no Termux ao fechar | `termux-wake-lock` e não mate o app nas configurações de bateria |
+
+## 🧱 Estrutura
+
+```
+src/
+├── main.js               # boot, dono, handlers
+├── core/                 # config, env, http, keypool (motor de contas), store
+├── wa/                   # conexão Baileys (QR/código) + cache de mensagens
+├── features/             # viewonce, antidelete, sticker, bgremoval, ai, download
+│   └── downloaders/      # tiktok (tikwm), pinterest, instagram, cobalt, qualidade
+└── util/                 # ffmpeg, webp (exif), texto
+```
+
+Zero bancos externos, zero módulos nativos obrigatórios: instala em qualquer lugar.
+
+## 🙏 Créditos e inspiração
+
+Construído sobre [Baileys](https://github.com/WhiskeySockets/Baileys). Ideias e
+padrões estudados nos melhores bots abertos da comunidade (Atlas-MD, ChisatoBOT,
+KIRA X MD e cia.) — e depois refeitos do zero, mais simples e mais rápidos.
+APIs: TikWM, Pollinations, Cobalt, remove.bg.
+
+---
+
+**Feito com ⚡ para ser o bot, não um botzinho.**
