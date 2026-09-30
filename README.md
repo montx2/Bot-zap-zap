@@ -33,6 +33,7 @@ A conexão consulta a revisão atual do WhatsApp Web antes de criar o socket, gu
 ```bash
 npm test
 npm run integration-test
+npm run connection-test   # simula queda, conflito e auto-cura de sessão
 ```
 
 O teste de integração usa mocks locais e FFmpeg; ele não substitui um teste real de conexão com o WhatsApp.
@@ -185,3 +186,21 @@ As chaves de autenticação e `data/vault.key` são dados extremamente sensívei
 
 ## RECUPERAÇÃO AUTOMÁTICA
 A conexão usa timeout explícito, keep-alive curto, `fireInitQueries` e recuperação automática para o erro interno de `init queries`. Um health probe periódico também detecta sessões que deixam de responder. A recuperação não apaga `data/auth`.
+
+## 🩹 Problemas de conexão: `conflict / replaced`, `Bad MAC`, figurinha lenta
+
+| Sintoma no log | Causa | O que o bot faz agora |
+| --- | --- | --- |
+| `stream:error … conflict … replaced` em loop (a cada ~6 s) | **Duas cópias** do bot usando a mesma sessão (ex.: `./bot.sh start` + `npm start`) — uma derruba a outra | Trava de instância única (`data/bot.lock`): a 2ª cópia avisa e sai. Se o conflito vier de outro aparelho, o bot espera 15 s → 30 s → … (máx. 5 min) em vez de brigar |
+| `Bad MAC` / `No matching sessions found` | Chaves de criptografia corrompidas (normalmente consequência das duas cópias acima) | Se o mesmo contato falha 2× em 15 min, só a sessão dele é apagada e recriada sozinha |
+| Comando/figurinha demora | Comando ficava na fila atrás do arquivamento; chaves lidas do disco a cada mensagem | Comandos saem em fila própria; chaves em cache na memória; redimensionamento mais leve |
+
+Se ainda aparecer `Bad MAC` depois de garantir **uma única cópia**:
+
+```bash
+./bot.sh stop      # para TODAS as cópias (supervisor e `npm start` manual)
+./bot.sh repair    # limpa só as sessões por contato (faz backup; não precisa parear de novo)
+./bot.sh start
+```
+
+Sempre use `./bot.sh restart` para reiniciar — nunca abra `npm start` enquanto o supervisor estiver ativo.
