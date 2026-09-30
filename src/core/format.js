@@ -86,7 +86,7 @@ export const CARD_LINE = '┄┄┄┄┄┄┄┄┄┄┄┄┄┄';
 export function card(title, rows = [], { body = '', footer = true } = {}) {
   const parts = [title, CARD_LINE, ...rows.filter(Boolean)];
   if (body) parts.push('', body);
-  if (footer && CONFIG.BRAND) parts.push(CARD_LINE, `_${CONFIG.BRAND}_`);
+  if (footer && CONFIG.BRAND) parts.push(CARD_LINE, CONFIG.BRAND);
   return parts.join('\n');
 }
 export function chatKind(jid) { return isGroupJid(jid) ? 'Grupo' : 'Privado'; }
