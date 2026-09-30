@@ -1,9 +1,9 @@
 // STICKER ENGINE 2.0
 //
 // - Imagem, vídeo, GIF, figurinha (estática/animada) e documento de imagem/vídeo.
-// - Modos: crop (padrão — preenche o quadrado inteiro), fit (inteira), full (estica),
-//   circle, round.  Com qualquer um que ocupe o quadrado, uma figurinha de entrada que
-//   tenha faixa transparente sobrando é medida e recortada antes de escalar.
+// - Modos: fit (padrão — imagem INTEIRA, sem cortar nada, centralizada no quadrado),
+//   crop (preenche), full (estica), circle, round.  Só no modo que preenche é que uma
+//   figurinha de entrada com faixa transparente sobrando é medida e recortada.
 // - Efeitos: bw, sepia, invert, flip, blur.  Vídeo: fast, slow, rev, boomerang, duração.
 // - Compressão adaptativa: tenta qualidades/FPS menores até caber no limite do WhatsApp.
 // - Nome do pacote/autor/emojis gravados no EXIF do WebP (aparece no WhatsApp).
@@ -58,11 +58,11 @@ export function stickerHelp(sock) {
     '*1️⃣ COMO CRIAR*',
     'Responda uma foto, vídeo, GIF ou figurinha com `.s`',
     '(ou mande a mídia com `.s` escrito na legenda).',
-    'A figurinha sempre sai *preenchendo o quadradinho inteiro*.',
+    'A figurinha sempre mostra a *imagem inteira* — nada de cortar rosto, bicho ou objeto.',
     '',
     '*2️⃣ MUDAR O FORMATO* (opcional)',
-    '`.s inteira` → mostra a imagem toda, com espacinho transparente em volta',
-    '`.s preencher` → quadrado cheio, cortando o que sobra (é o padrão)',
+    '`.s inteira` → mostra a imagem toda, com espacinho transparente em volta (é o padrão)',
+    '`.s preencher` → quadrado cheio, cortando o que sobra',
     '`.s esticar` → estica a imagem até caber',
     '`.s circulo` → deixa a figurinha redonda',
     '`.s borda` → só arredonda os cantos',
@@ -122,7 +122,7 @@ const FLAG_TOKENS = {
 };
 const EMOJI_RE = /\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*/gu;
 
-const DEFAULT_FIT = FIT_TOKENS[strip(CONFIG.STICKER_FIT)] || 'crop';
+const DEFAULT_FIT = FIT_TOKENS[strip(CONFIG.STICKER_FIT)] || 'fit';
 
 export function defaultOptions() {
   return { fit: DEFAULT_FIT, fx: [], speed: 1, reverse: false, boomerang: false, static: false, quality: 'normal', seconds: null };
@@ -186,7 +186,7 @@ export function buildFilter(opts, { animated, fps = 15, trim = null } = {}) {
   // Em "fast" amostra mais rápido na entrada; em "slow" duplica frames depois do setpts.
   if (animated) f.push(`fps=${fps * Math.max(1, opts.speed)}`);
   f.push('format=rgba');
-  // Recorta o que sobra (banda transparente) ANTES de escalar: a figurinha preenche tudo.
+  // Recorta o que sobra (banda transparente) ANTES de escalar — só nos modos que preenchem.
   if (trim) f.push(`crop=${trim.w}:${trim.h}:${trim.x}:${trim.y}`);
   for (const fx of opts.fx) f.push(FX_FILTERS[fx]);
   f.push('format=rgba');
@@ -217,12 +217,13 @@ function ladder(animated, quality) {
  * Variantes do filtro de vídeo, da mais completa para a mais simples.
  * FFmpegs enxutos (alguns builds de Termux) não têm `geq`/`gblur`/etc.: em vez de
  * falhar, o bot reencoded com uma versão mais simples e avisa no log.
+ * O último recurso é o modo padrão (imagem inteira): nunca corta a mídia.
  */
 export function filterVariants(opts, ctx) {
   const out = [buildFilter(opts, ctx)];
   if (MASKS[opts.fit]) out.push(buildFilter({ ...opts, fit: 'crop' }, ctx));  // sem máscara (geq)
   if (opts.fx.length) out.push(buildFilter({ ...opts, fx: [] }, ctx));        // sem efeitos
-  out.push(buildFilter({ ...defaultOptions(), fit: 'crop' }, ctx));           // último recurso
+  out.push(buildFilter(defaultOptions(), ctx));                              // último recurso (imagem inteira)
   return [...new Set(out)];
 }
 

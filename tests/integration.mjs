@@ -100,13 +100,16 @@ const lastSticker=()=>sent.filter(x=>x.content?.sticker).at(-1).content;
   assert.equal(p.opts.fit,'circle'); assert.deepEqual(p.opts.fx,['bw']); assert.equal(p.opts.speed,0.5); assert.equal(p.opts.seconds,6);
   assert.deepEqual(p.emojis,['😎']); assert.equal(p.pack,'Meu Pack'); assert.equal(p.author,'Eu'); assert.equal(p.unknown.length,0);
   assert.deepEqual(ST.parseStickerArgs('círculo PRETO').unknown,['PRETO']);
-  // padrão: SEMPRE preencher o quadrado inteiro (figurinha completa)
-  assert.equal(ST.parseStickerArgs('').opts.fit,'crop');
-  assert.equal(ST.defaultOptions().fit,'crop');
-  assert.match(ST.buildFilter(ST.defaultOptions()),/force_original_aspect_ratio=increase/);
-  assert.match(ST.buildFilter(ST.defaultOptions()),/crop=512:512/);
+  // padrão: imagem INTEIRA, sem cortar nada (só dimensiona para caber no quadrado)
+  assert.equal(ST.parseStickerArgs('').opts.fit,'fit');
+  assert.equal(ST.defaultOptions().fit,'fit');
+  assert.match(ST.buildFilter(ST.defaultOptions()),/force_original_aspect_ratio=decrease/);
+  assert.match(ST.buildFilter(ST.defaultOptions()),/pad=512:512/);
+  assert.ok(!ST.buildFilter(ST.defaultOptions()).includes('crop=512:512'),'padrão não pode cortar a imagem');
   assert.match(ST.buildFilter(ST.defaultOptions(),{animated:true}),/^fps=/);
-  // "inteira" continua disponível por escolha explícita
+  // "preencher" (quadrado cheio, cortando o excesso) segue disponível por escolha explícita
+  assert.equal(ST.parseStickerArgs('preencher').opts.fit,'crop');
+  assert.match(ST.buildFilter(ST.parseStickerArgs('preencher').opts),/crop=512:512/);
   assert.equal(ST.parseStickerArgs('inteira').opts.fit,'fit');
   assert.match(ST.buildFilter(ST.parseStickerArgs('inteira').opts),/pad=512:512/);
   // plano B de filtros: build limitado recebe versão simplificada em vez de erro
@@ -116,45 +119,70 @@ const lastSticker=()=>sent.filter(x=>x.content?.sticker).at(-1).content;
   assert.ok(!fb.at(-1).includes('geq')&&!fb.at(-1).includes('gblur'),'último recurso deveria ser simples');
   // guia simples: explica cada coisa, sem jargão técnico
   const help=ST.stickerHelp(sock);
-  for(const trecho of ['COMO CRIAR','preenchendo o quadradinho inteiro','MUDAR O FORMATO','EFEITOS','VÍDEO E GIF','SEU NOME NA FIGURINHA','OUTRAS FERRAMENTAS','.s inteira','.s circulo','.s leve','.take','.sticker auto on'])
+  for(const trecho of ['COMO CRIAR','imagem inteira','MUDAR O FORMATO','EFEITOS','VÍDEO E GIF','SEU NOME NA FIGURINHA','OUTRAS FERRAMENTAS','.s inteira','.s circulo','.s leve','.take','.sticker auto on'])
     assert.ok(help.includes(trecho),`guia sem "${trecho}"`);
   assert.ok(!help.includes('EXIF')&&!help.includes('hq / lq'),'guia ainda tem jargão');
 }
 
-// ── default .s puro preenche o quadrado em TODO tipo de mídia ──
+// ── default .s puro NÃO corta: mostra a imagem inteira em TODO tipo de mídia ──
 {
-  // mídia NÃO quadrada e opaca: o canto tem de sair opaco (sem borda vazia)
+  // mídia NÃO quadrada: 320×120 com a metade esquerda vermelha e a direita azul
+  // (assim dá pra provar que nenhum lado foi cortado).
+  const wide=path.join(root,'data','split.png');
+  spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=red:s=160x120','-f','lavfi','-i','color=c=blue:s=160x120',
+    '-filter_complex','[0:v][1:v]hstack,format=rgba','-frames:v','1','-y',wide]);
+  const split=fs.readFileSync(wide);
   const opaque = await runFfmpegOut(['-f','lavfi','-i','color=c=red:s=320x120','-frames:v','1','-y',path.join(root,'data','wide.png')]);
-  const corner=(webp)=>{ const p=path.join(root,'data','c.png');
+  const wideMp4=path.join(root,'data','split.mp4');
+  spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=red:s=160x120:d=1:r=12','-f','lavfi','-i','color=c=blue:s=160x120:d=1:r=12',
+    '-filter_complex','[0:v][1:v]hstack','-c:v','libx264','-pix_fmt','yuv444p','-t','1','-y',wideMp4]);
+  // pixel (x,y) da figurinha gerada
+  const px=(webp,x,y)=>{ const p=path.join(root,'data','c.png');
     spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-f','webp_pipe','-i','pipe:0','-frames:v','1','-y',p],{input:webp,stdio:['pipe','ignore','ignore']});
-    return [...spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-i',p,'-vf','crop=1:1:0:0,format=rgba','-frames:v','1','-f','rawvideo','pipe:1'],{encoding:'buffer'}).stdout.slice(0,4)]; };
+    return [...spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-i',p,'-vf',`crop=1:1:${x}:${y},format=rgba`,'-frames:v','1','-f','rawvideo','pipe:1'],{encoding:'buffer'}).stdout.slice(0,4)]; };
+  const vermelho=(c)=>c.length===4&&c[3]>200&&c[0]>150&&c[1]<110&&c[2]<110;
+  const azul=(c)=>c.length===4&&c[3]>200&&c[2]>150&&c[0]<110&&c[1]<110;
+  const vazio=(c)=>c.length===4&&c[3]<10;
+  // 320×120 vira 512×192 no meio do quadrado: sobra faixa transparente em cima e embaixo
   for(const [nome,src,buf] of [
-    ['imagem', {kind:'image',mime:'image/png'}, opaque],
-    ['documento', {kind:'image',mime:'image/png'}, opaque],
+    ['imagem', {kind:'image',mime:'image/png'}, split],
+    ['documento', {kind:'image',mime:'image/png'}, split],
   ]){
     const r=await ST.buildSticker(buf,src,{opts:ST.defaultOptions(),pack:'P',author:'A',emojis:[]});
     const info=W.parseWebp(r.webp);
     assert.equal(info.width,512,`${nome}: largura`); assert.equal(info.height,512,`${nome}: altura`);
-    assert.equal(corner(r.webp)[3],255,`${nome}: .s puro deixou borda vazia`);
+    assert.ok(vazio(px(r.webp,0,0)),`${nome}: .s puro deveria deixar faixa transparente em cima`);
+    assert.ok(vazio(px(r.webp,511,511)),`${nome}: .s puro deveria deixar faixa transparente embaixo`);
+    assert.ok(vermelho(px(r.webp,128,256)),`${nome}: metade vermelha sumiu — cortou a imagem`);
+    assert.ok(azul(px(r.webp,384,256)),`${nome}: metade azul sumiu — cortou a imagem`);
   }
-  // figurinha antiga com faixa transparente → .s puro conserta
+  // vídeo/GIF: mesmo acordo, nada de cortar
+  {
+    const r=await ST.buildSticker(fs.readFileSync(wideMp4),{kind:'video',mime:'video/mp4'},{opts:ST.defaultOptions(),pack:'P',author:'A',emojis:[]});
+    assert.ok(vazio(px(r.webp,0,0)),'vídeo: .s puro deveria deixar faixa transparente');
+    assert.ok(vermelho(px(r.webp,128,256)),'vídeo: metade vermelha sumiu — cortou a imagem');
+    assert.ok(azul(px(r.webp,384,256)),'vídeo: metade azul sumiu — cortou a imagem');
+  }
+  // figurinha antiga com faixa transparente → .s puro PRESERVA a faixa (não corta)
   const pad=path.join(root,'data','padded.webp');
   spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-i',path.join(root,'data','wide.png'),'-vf',
     'scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000',
     '-c:v','libwebp','-q:v','80','-frames:v','1','-y',pad]);
   const padded=fs.readFileSync(pad);
   assert.ok(W.parseWebp(padded).hasAlpha,'fixture padded deveria ter alpha');
-  assert.equal(corner(padded)[3],0,'fixture padded deveria ter borda transparente');
-  const fixed=await ST.buildSticker(padded,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('').opts,pack:'P',author:'A',emojis:[]});
-  assert.equal(fixed.retagged,false,'figurininha com faixa não pode ir pelo atalho instantâneo');
-  assert.equal(corner(fixed.webp)[3],255,'.s puro deveria preencher a figurinha com faixa');
-  // ...mas quem pede "inteira" de propósito continua com a borda
-  const keep=await ST.buildSticker(padded,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('inteira').opts,pack:'P',author:'A',emojis:[]});
-  assert.equal(corner(keep.webp)[3],0,'.s inteira deveria respeitar a borda transparente');
+  assert.ok(vazio(px(padded,0,0)),'fixture padded deveria ter borda transparente');
+  const kept=await ST.buildSticker(padded,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('').opts,pack:'P',author:'A',emojis:[]});
+  assert.equal(kept.retagged,false,'figurinha com faixa não pode ir pelo atalho instantâneo');
+  assert.ok(vazio(px(kept.webp,0,0)),'.s puro deveria preservar a borda transparente');
+  assert.ok(vermelho(px(kept.webp,128,256)),'.s puro deveria manter a figurinha inteira');
+  // ...mas quem pede "preencher" quer o quadrado cheio (aí sim corta o excesso)
+  const filled=await ST.buildSticker(padded,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('preencher').opts,pack:'P',author:'A',emojis:[]});
+  assert.equal(filled.retagged,false,'preencher precisa re-encode');
+  assert.ok(!vazio(px(filled.webp,0,0)),'.s preencher deveria preencher a figurinha com faixa');
   // figurinha que já preenche → atalho instantâneo (sem re-encode)
   const solid=await ST.buildSticker(png,{kind:'image',mime:'image/png'},{opts:ST.defaultOptions(),pack:'P',author:'A',emojis:[]});
   const again=await ST.buildSticker(solid.webp,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('').opts,pack:'P',author:'A',emojis:[]});
-  assert.equal(again.retagged,true,'figurininha já completa deveria ser só retagueada');
+  assert.equal(again.retagged,true,'figurinha já completa deveria ser só retagueada');
   assert.equal(again.attempts,0,'atalho instantâneo não deveria codificar');
 }
 
