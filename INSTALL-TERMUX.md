@@ -4,7 +4,7 @@
 
 ```bash
 pkg update -y && pkg upgrade -y
-pkg install nodejs-lts git ffmpeg unzip nano -y
+pkg install nodejs-lts git ffmpeg unzip nano termux-api -y
 termux-setup-storage
 ```
 
@@ -22,6 +22,7 @@ cd ~/Bot-Zap-Supremo
 ## 3. Instalar e validar
 
 ```bash
+cp .env.example .env   # opcional: personalize
 npm ci
 ./bot.sh doctor
 ./bot.sh test

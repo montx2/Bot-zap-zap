@@ -58,6 +58,8 @@ export const saveCall=r=>db.prepare('INSERT INTO calls(peer_jid,status,video,cal
 export const saveLink=r=>db.prepare('INSERT INTO links(remote_jid,message_id,url,ts) VALUES(?,?,?,?)').run(r.remoteJid,r.messageId,r.url,r.ts||Date.now());
 export const saveMedia=r=>db.prepare('INSERT OR IGNORE INTO media(remote_jid,message_id,kind,file_path,sha256,bytes,encrypted,created_at) VALUES(?,?,?,?,?,?,?,?)').run(r.remoteJid,r.messageId,r.kind,r.filePath,r.sha256,r.bytes||0,r.encrypted?1:0,r.createdAt||Date.now());
 export const listMedia=(limit=50)=>db.prepare('SELECT * FROM media ORDER BY created_at DESC LIMIT ?').all(limit);
+export const listMediaByKind=(kind,limit=10)=>db.prepare('SELECT * FROM media WHERE kind=? ORDER BY created_at DESC LIMIT ?').all(kind,Math.min(50,Math.max(1,Number(limit)||10)));
+export const countMediaByKind=(kind,since=0)=>db.prepare('SELECT COUNT(*) c FROM media WHERE kind=? AND created_at>=?').get(kind,since).c;
 export const getMediaById=id=>db.prepare('SELECT * FROM media WHERE id=?').get(Number(id))||null;
 export const mediaForMessage=(jid,id)=>db.prepare('SELECT * FROM media WHERE remote_jid=? AND message_id=? ORDER BY created_at DESC LIMIT 20').all(jid,id);
 export const mediaForMessageKind=(jid,id,kind)=>db.prepare('SELECT * FROM media WHERE remote_jid=? AND message_id=? AND kind=? ORDER BY created_at DESC LIMIT 1').get(jid,id,kind)||null;
@@ -76,4 +78,13 @@ export const getProfile=jid=>db.prepare('SELECT * FROM profile_snapshots WHERE j
 export const saveProfile=r=>db.prepare('INSERT INTO profile_snapshots(jid,label,pp_url,about,last_check) VALUES(?,?,?,?,?) ON CONFLICT(jid) DO UPDATE SET label=excluded.label,pp_url=excluded.pp_url,about=excluded.about,last_check=excluded.last_check').run(r.jid,r.label||null,r.ppUrl||null,r.about||null,r.lastCheck||Date.now());
 export function stats(){return {messages:db.prepare('SELECT COUNT(*) c FROM messages').get().c,chats:db.prepare('SELECT COUNT(DISTINCT remote_jid) c FROM messages').get().c,deleted:db.prepare('SELECT COUNT(*) c FROM messages WHERE deleted_at IS NOT NULL').get().c,edits:db.prepare('SELECT COUNT(*) c FROM edits').get().c,media:db.prepare('SELECT COUNT(*) c FROM media').get().c,mediaBytes:db.prepare('SELECT COALESCE(SUM(bytes),0) c FROM media').get().c,viewOnce:db.prepare('SELECT COUNT(*) c FROM messages WHERE view_once=1').get().c,links:db.prepare('SELECT COUNT(*) c FROM links').get().c,events:db.prepare('SELECT COUNT(*) c FROM events').get().c,groups:db.prepare('SELECT COUNT(*) c FROM group_events').get().c};}
 export const exportRows=(jid,limit)=>jid?db.prepare('SELECT * FROM messages WHERE remote_jid=? ORDER BY ts ASC LIMIT ?').all(jid,limit):[];
+// ── Manutenção (retenção de dados para rodar anos no celular) ──
+export const pruneRaw=cutoff=>db.prepare('UPDATE messages SET raw_json=NULL WHERE ts<? AND raw_json IS NOT NULL AND view_once=0').run(cutoff).changes;
+export const pruneTable=(table,col,cutoff)=>{if(!/^(events|presence_events|receipts|reactions|calls|group_events)$/.test(table))throw new Error('tabela inválida');return db.prepare(`DELETE FROM ${table} WHERE ${col}<?`).run(cutoff).changes;};
+const inList=n=>Array(n).fill('?').join(',');
+export const mediaOlderThan=(kinds,cutoff)=>db.prepare(`SELECT id,file_path,bytes FROM media WHERE kind IN (${inList(kinds.length)}) AND created_at<?`).all(...kinds,cutoff);
+export const mediaOldestFirst=(kinds,limit=200)=>db.prepare(`SELECT id,file_path,bytes FROM media WHERE kind IN (${inList(kinds.length)}) ORDER BY created_at ASC LIMIT ?`).all(...kinds,limit);
+export const mediaBytesOf=kinds=>db.prepare(`SELECT COALESCE(SUM(bytes),0) b FROM media WHERE kind IN (${inList(kinds.length)})`).get(...kinds).b;
+export const deleteMediaRows=ids=>{const st=db.prepare('DELETE FROM media WHERE id=?');for(const id of ids)st.run(id);return ids.length;};
+export const checkpointDb=()=>{try{db.exec('PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;');}catch{}};
 export const closeDb=()=>db.close();

@@ -14,7 +14,8 @@ Bot pessoal WhatsApp para Termux, sem painel web, sem Windows, sem IA obrigatór
 - Histórico de links e limpeza de parâmetros de rastreamento.
 - Cofre normal + Black Vault.
 - Status saver opcional e limitado à lista de alvos.
-- Laboratório FFmpeg: sticker, sticker de vídeo, PTT, MP3 e GIF.
+- **Sticker Engine 2.0**: figurinhas de imagem, vídeo, GIF e de outras figurinhas, com pack/autor, formatos, efeitos e compressão adaptativa (veja abaixo).
+- Conversores FFmpeg: GIF, MP4, PTT, MP3, figurinha → imagem/GIF/vídeo.
 - Hash SHA-256, exportação de conversa, backups e doctor.
 - Busca unificada `.find` em mensagens, links, mídias e eventos.
 - Comandos administrativos aceitos somente de mensagens enviadas pela própria conta.
@@ -72,7 +73,10 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 ```text
 .menu
-.vo on|off|status
+.vo                  # painel da visualização única
+.vo on|off
+.vo list [n]         # últimas capturas
+.vo get ID           # reenvia uma captura arquivada
 .o                  # responder uma View Once para tentar recuperação manual
 .find termo
 .media
@@ -80,9 +84,9 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 .events
 .save                # guardar a mensagem citada no cofre
 .black save|list|get ID
-.sticker on|off|status
-.sticker             # responder imagem/vídeo
-.ptt | .mp3 | .gif    # responder mídia
+.s                   # figurinha de imagem/vídeo/GIF/figurinha (responda ou use como legenda)
+.gif | .mp4 | .ptt | .mp3   # responder mídia
+.toimg | .take | .stickerinfo   # veja a seção Figurinhas
 .hash
 .watch add número nome
 .watch hours número 8 9 10 11
@@ -102,6 +106,51 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 .health
 .status
 ```
+
+## 🎨 Figurinhas (Sticker Engine 2.0)
+
+Liberado por padrão. Responda uma mídia com `.s` — ou envie a imagem/vídeo/GIF já com `.s` na legenda. Aceita imagem, vídeo, GIF, figurinha (estática ou animada) e documento de imagem/vídeo.
+
+```text
+.s                     # padrão: imagem inteira com fundo transparente
+.s crop                # preenche o quadrado cortando as bordas
+.s full                # estica para 512×512
+.s circle | .s round   # recorte circular / cantos arredondados (borda suave)
+.s bw | sepia | invert | flip | blur        # efeitos (combináveis)
+.s slow | fast | rev | boomerang            # vídeo/GIF
+.s 6                   # duração máxima em segundos (1–15)
+.s static              # só o primeiro frame do vídeo
+.s hq | lq             # qualidade maior / arquivo menor
+.s crop 😎 | Meu Pack | Meu Nome            # emoji + pack + autor desta figurinha
+
+.sticker pack Nome | Autor    # pack/autor padrão (reset: .sticker pack reset)
+.sticker auto on|off          # tudo que você mandar pro seu próprio chat vira figurinha
+.take Pack | Autor            # responda uma figurinha: troca o pack/autor
+.toimg [doc]                  # figurinha → imagem (doc mantém transparência)
+.togif | .tovideo             # figurinha animada → GIF / vídeo
+.stickerinfo                  # pack, autor, emojis, frames, tamanho
+.menu figurinha               # ajuda completa
+```
+
+O que o motor faz por você:
+
+- **Compressão adaptativa**: se a figurinha passa de 100 KB (estática) ou 500 KB (animada), o bot baixa qualidade/FPS/duração automaticamente até caber.
+- **Pack e autor de verdade**: gravados no EXIF do WebP (em JavaScript puro, sem `webpmux`).
+- **Figurinha animada → qualquer coisa**: o FFmpeg 7.0 não lê WebP animado, então o bot decodifica e compõe os frames sozinho.
+- Reações ⏳ → (some) / ❌ na mensagem do comando, fila de uma conversão por vez (poupa o celular) e limpeza automática de temporários.
+- Pack padrão: **by 𝖒𝖔𝖓𝖙𝖝2_** (sem autor, visual limpo). Ajustes por `.env`: `BOT_BRAND`, `STICKER_PACK`, `STICKER_AUTHOR`, `STICKER_MAX_SECONDS`, `STICKER_MAX_STATIC_KB`, `STICKER_MAX_ANIMATED_KB`, `STICKER_REACT`, `STICKER_AUTO_SELF`.
+
+> Quem tinha figurinhas bloqueadas (`.sticker off`) no motor antigo passa a ter o recurso liberado uma única vez na atualização; use `.sticker off` de novo se quiser bloquear.
+
+## 🔧 Uso 24h no Termux (1 aparelho)
+
+- **`.env` agora é lido de verdade.** Copie `cp .env.example .env` e edite (antes as variáveis eram ignoradas).
+- **Wake-lock:** `pkg install termux-api` (e o app *Termux:API*). O supervisor usa `termux-wake-lock` para o Android não matar o bot com a tela apagada. Desative a otimização de bateria do Termux nas configurações do Android.
+- **Manutenção automática diária** (ou `.clean` na hora): compacta mensagens antigas (`KEEP_RAW_DAYS`), expira mídias comuns (`MEDIA_KEEP_DAYS`, teto `MEDIA_MAX_GB`), poda eventos antigos, rotaciona o log (`LOG_MAX_MB`) e limpa temporários. **View Once e cofre nunca são apagados.**
+- **Backup** (`./bot.sh backup` / `.backup`): não inclui backups anteriores e mantém só os 5 mais recentes.
+- **Comandos antigos não reexecutam:** mensagens com mais de 2 min entregues em lote após uma queda de internet não disparam comandos.
+- **Sessão encerrada pelo WhatsApp:** o bot avisa no log e para (em vez de ficar em loop). Re-pareie: `./bot.sh stop && rm -rf data/auth && ./bot.sh pair 55DDDNUMERO && ./bot.sh start`.
+- `./bot.sh doctor` mostra FFmpeg/codecs, espaço livre, wake-lock e `.env`.
 
 ## Controle de módulos
 
