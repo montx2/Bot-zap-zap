@@ -31,8 +31,6 @@ const VERSION_CACHE = path.join(DATA_DIR, 'wa-web-version.json');
 let socket = null;
 let stopping = false;
 let reconnectTimer = null;
-let pairingRequestedAt = 0;
-let pairingRequestInProgress = false;
 
 export function getSocket() {
   return socket;
@@ -138,27 +136,9 @@ function printQR(qr) {
     });
 }
 
-async function waitForSocketOpen(clientSocket) {
-  if (typeof clientSocket.waitForSocketOpen !== 'function') {
-    throw new Error('esta versão do Baileys não expõe waitForSocketOpen()');
-  }
-
-  let timeout;
-  try {
-    await Promise.race([
-      clientSocket.waitForSocketOpen(),
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('timeout esperando o socket abrir')), 30_000);
-      })
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const canRequestPairingCode = () =>
-  !pairingRequestedAt || Date.now() - pairingRequestedAt > 120_000;
+
+const maskNumber = (n) => `+${n.slice(0, 4)}${'*'.repeat(Math.max(0, n.length - 8))}${n.slice(-4)}`;
 
 /**
  * Inicia (ou reinicia) o socket do Baileys.
@@ -167,6 +147,19 @@ const canRequestPairingCode = () =>
 export async function startClient(handlers = {}) {
   ensureDirs();
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+
+  // IMPORTANTE: requestPairingCode() grava creds.me (seu número) no disco. Se a
+  // conexão cair antes de você digitar o código, o Baileys reconecta fazendo
+  // LOGIN (porque creds.me existe) em vez de REGISTRO, o servidor recusa e o
+  // código antigo fica morto. Sem pareamento concluído, sempre começamos limpo.
+  if (!state.creds.registered && (state.creds.me || state.creds.pairingCode)) {
+    state.creds.me = undefined;
+    state.creds.pairingCode = undefined;
+    await saveCreds();
+  }
+  try {
+    fs.rmSync(PAIR_CODE_FILE, { force: true });
+  } catch {}
 
   const { version, source } = await resolveWaVersion();
   log.info(`versão WA Web: ${version ? version.join('.') : 'padrão'} (${source})`);
@@ -181,7 +174,7 @@ export async function startClient(handlers = {}) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, undefined)
     },
-    browser: isTermux() ? Browsers.ubuntu('NEXUS Bot') : Browsers.windows('NEXUS Bot'),
+    browser: isTermux() ? Browsers.ubuntu('Chrome') : Browsers.windows('Chrome'),
     printQRInTerminal: false, // nós controlamos o QR
     markOnlineOnConnect: false,
     generateHighQualityLinkPreview: true,
@@ -201,10 +194,10 @@ export async function startClient(handlers = {}) {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      if (isTermux()) {
-        log.warn('QR recebido no Termux (inesperado) — prefira pareamento por código: ./pair SEUNUMERO');
-        return;
-      }
+      // O 1º evento 'qr' significa: handshake concluído e servidor pronto para
+      // parear. É o momento certo de pedir o código (1 vez por socket).
+      if (pairingNumber) triggerPairing();
+      if (isTermux() || pairingNumber) return;
       printQR(qr);
     }
 
@@ -238,7 +231,7 @@ export async function startClient(handlers = {}) {
         log.warn('credenciais removidas — iniciando novo pareamento…');
       }
 
-      scheduleReconnect(handlers, loggedOut ? 2000 : 4000, code);
+      scheduleReconnect(handlers, code === DisconnectReason.restartRequired ? 500 : loggedOut ? 2000 : 4000, code);
     }
   });
 
@@ -266,58 +259,31 @@ export async function startClient(handlers = {}) {
     }
   });
 
-  // Pareamento por código (Termux sempre; desktop opcional). O código é
-  // reutilizado por até 2 minutos: reconexões curtas não devem invalidá-lo.
-  if (!state.creds.registered && pairingNumber) {
+  // Pareamento por código (Termux sempre; desktop opcional).
+  // Cada socket novo gera um código NOVO; o anterior morre junto com o socket.
+  let pairingStarted = false;
+  function triggerPairing() {
+    if (pairingStarted || state.creds.registered) return;
     (async () => {
-      if (!canRequestPairingCode()) {
-        log.info('pareamento já solicitado há menos de 2 minutos; mantendo o código existente (data/pairing-code.txt).');
-        return;
-      }
-
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (stopping || socket !== clientSocket || state.creds.registered) return;
         try {
-          await waitForSocketOpen(clientSocket);
-          if (stopping || socket !== clientSocket || clientSocket.user || state.creds.registered) return;
-
-          // Serializa pedidos quando uma reconexão começa enquanto o anterior
-          // ainda está aguardando a resposta do WhatsApp.
-          while (pairingRequestInProgress) {
-            if (stopping || socket !== clientSocket || state.creds.registered) return;
-            if (!canRequestPairingCode()) {
-              log.info('o código recente segue válido; não vou pedir outro nesta reconexão.');
-              return;
-            }
-            await sleep(100);
-          }
-          if (!canRequestPairingCode()) {
-            log.info('o código recente segue válido; não vou pedir outro nesta reconexão.');
-            return;
-          }
-
-          pairingRequestInProgress = true;
-          let code;
-          try {
-            code = await clientSocket.requestPairingCode(pairingNumber);
-            pairingRequestedAt = Date.now();
-          } finally {
-            pairingRequestInProgress = false;
-          }
+          const code = await clientSocket.requestPairingCode(pairingNumber);
+          if (stopping || socket !== clientSocket) return;
+          const pretty = /^[A-Z0-9]{8}$/.test(code) ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
 
           try {
-            fs.writeFileSync(PAIR_CODE_FILE, `${code}\n`, { mode: 0o600 });
-            fs.chmodSync(PAIR_CODE_FILE, 0o600);
-          } catch (error) {
-            log.warn(`não consegui salvar o código em data/pairing-code.txt: ${error.message}`);
-          }
+            fs.writeFileSync(PAIR_CODE_FILE, `${pretty}\n`, { mode: 0o600 });
+          } catch {}
 
           banner([
             '📱 CÓDIGO DE PAREAMENTO',
             '',
-            `          ${code}`,
+            `          ${pretty}`,
             '',
-            '⏱️ VALE ~1 MINUTO: DIGITE AGORA.',
+            `Número: ${maskNumber(pairingNumber)}  (tem que ser o MESMO do WhatsApp)`,
+            '⏱️ Digite AGORA. Não feche o Termux nem deixe a rede cair.',
+            'Se aparecer outro código depois, use SÓ o mais novo.',
             '',
             'WhatsApp → Dispositivos conectados →',
             'Conectar com número de telefone'
@@ -326,11 +292,20 @@ export async function startClient(handlers = {}) {
         } catch (error) {
           log.warn(`pareamento (tentativa ${attempt}/3): ${String(error?.message || error).slice(0, 120)}`);
           if (stopping || socket !== clientSocket) return;
-          if (attempt < 3) await sleep(5000);
+          if (attempt < 3) await sleep(3000);
         }
       }
-      log.error('não consegui registrar o código de pareamento após 3 tentativas. Verifique a internet e tente novamente.');
+      log.error('não consegui gerar o código de pareamento após 3 tentativas. Verifique a internet e tente novamente.');
     })();
+  }
+
+  if (!state.creds.registered && pairingNumber) {
+    // plano B: se o 'qr' demorar, avisa em vez de ficar mudo
+    setTimeout(() => {
+      if (!pairingStarted && socket === clientSocket && !stopping) {
+        log.warn('ainda aguardando o servidor do WhatsApp liberar o pareamento… confira a internet.');
+      }
+    }, 30_000).unref();
   }
 
   return clientSocket;

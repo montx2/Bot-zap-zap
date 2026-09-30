@@ -11,6 +11,8 @@ case "$cmd" in
       echo "📦 Instalando dependências…"
       npm install --no-audit --no-fund
     fi
+    # Termux: evita o Android suspender o bot (conexão cai = código de pareamento morre)
+    if command -v termux-wake-lock >/dev/null 2>&1; then termux-wake-lock || true; fi
     exec node src/main.js
     ;;
   pair)
