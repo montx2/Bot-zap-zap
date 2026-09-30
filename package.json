@@ -1,0 +1,22 @@
+{
+  "name": "bot-zap-supremo",
+  "version": "6.0.3",
+  "description": "Bot pessoal WhatsApp Termux-first com recuperação resiliente de conexão, View Once, arquivo local, monitoramento de eventos, cofre, mídia e automações.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "pair": "node src/pair.js",
+    "doctor": "node scripts/doctor.mjs",
+    "test": "node scripts/selftest.mjs",
+    "integration-test": "rm -rf .test-runtime; BOT_ROOT=$PWD/.test-runtime node --loader ./tests/mock-loader.mjs ./tests/integration.mjs; code=$?; rm -rf .test-runtime; exit $code",
+    "connection-smoke": "node scripts/connection-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "pino": "9.6.0"
+  }
+}
