@@ -5,8 +5,8 @@ set -euo pipefail
 echo "📦 Atualizando pacotes do Termux…"
 pkg update -y && pkg upgrade -y
 
-echo "📦 Instalando Node.js, Git e FFmpeg…"
-pkg install -y nodejs-lts git ffmpeg
+echo "📦 Instalando Node.js, Git, FFmpeg e utilitários…"
+pkg install -y nodejs-lts git ffmpeg procps
 
 cd "$(dirname "$0")"
 

@@ -30,7 +30,12 @@ case "$cmd" in
     echo "✅ Atualizado. Rode ./bot.sh start"
     ;;
   stop)
-    pkill -f "node src/main.js" && echo "🛑 Bot parado." || echo "ℹ️ Bot não estava rodando."
+    if command -v pkill >/dev/null 2>&1; then
+      pkill -f "node src/main.js" && echo "🛑 Bot parado." || echo "ℹ️ Bot não estava rodando."
+    else
+      pid=$(ps -ef 2>/dev/null | grep "[n]ode src/main.js" | awk '{print $2}' | head -1)
+      if [ -n "$pid" ]; then kill "$pid" && echo "🛑 Bot parado (PID $pid)."; else echo "ℹ️ Bot não estava rodando."; fi
+    fi
     ;;
   *)
     echo "⚡ NEXUS BOT"

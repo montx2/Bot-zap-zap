@@ -72,7 +72,8 @@ async function boot() {
     onMessage: async (sock, msg) => {
       const deps = {
         ownerJid: owner.jid,
-        isOwner: (jid, participant) => owner.isOwner(sock, jid, participant),
+        // fromMe = enviado pela própria conta do bot = o dono falando.
+        isOwner: (jid, participant) => !!msg.key?.fromMe || owner.isOwner(sock, jid, participant),
         sendOwner: async (content) => {
           if (!owner.jid) return;
           return sock

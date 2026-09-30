@@ -161,7 +161,10 @@ export async function startClient(handlers = {}) {
     markOnlineOnConnect: false,
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
-    emitOwnEvents: false,
+    // Essencial para bot pessoal: o dono comanda o bot a partir da própria
+    // conta, então precisamos receber as mensagens fromMe. (Os próprios envios
+    // do bot nunca começam com prefixo de comando, então não há loop.)
+    emitOwnEvents: true,
     logger: baileysLogger
   });
 
