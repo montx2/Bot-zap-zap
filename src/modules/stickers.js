@@ -1,11 +1,14 @@
 // STICKER ENGINE 2.0
 //
 // - Imagem, vídeo, GIF, figurinha (estática/animada) e documento de imagem/vídeo.
-// - Modos: fit (inteira), crop (preenche), full (estica), circle, round.
+// - Modos: crop (padrão — preenche o quadrado inteiro), fit (inteira), full (estica),
+//   circle, round.
 // - Efeitos: bw, sepia, invert, flip, blur.  Vídeo: fast, slow, rev, boomerang, duração.
 // - Compressão adaptativa: tenta qualidades/FPS menores até caber no limite do WhatsApp.
 // - Nome do pacote/autor/emojis gravados no EXIF do WebP (aparece no WhatsApp).
 // - Extras: .take (troca pack/autor), .toimg, .stickerinfo, modo automático no chat consigo.
+// - Filtros com plano B: se o FFmpeg recusar um filtro (build limitado), reencoded com
+//   uma versão mais simples em vez de falhar.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -13,7 +16,7 @@ import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { dbGet, dbSet } from '../core/db.js';
 import { CONFIG } from '../core/config.js';
 import { logger } from '../core/logger.js';
-import { extractText, getQuoted, getMediaNode, formatBytes, isSelfChat } from '../core/format.js';
+import { extractText, getQuoted, getMediaNode, formatBytes, isSelfChat, card } from '../core/format.js';
 import { extFromMime, ffmpegCapabilities, probeMedia, runFfmpeg, withTempDir } from '../core/media.js';
 import { SerialQueues } from '../core/queue.js';
 import { isAnimatedWebp, parseWebp, packId, readStickerExif, tagSticker } from '../core/webp.js';
@@ -47,41 +50,46 @@ export function resetPack() { dbSet('sticker.pack', ''); dbSet('sticker.author',
 
 export function stickerHelp(sock) {
   const { pack, author } = getPack(sock);
-  return `🎨 *STICKER ENGINE 2.0*
-Status: ${stickerEnabled() ? '✅ liberado' : '🔒 bloqueado'} • Auto (chat comigo): ${stickerAutoEnabled() ? '✅' : '🔒'}
-📦 Pack: *${pack || '—'}* • ✍️ Autor: *${author || '—'}*
-
-*Criar* (responda ou mande a mídia com legenda)
-.s → imagem, vídeo, GIF ou figurinha
-.sticker | .fig | .figurinha (mesmo comando)
-
-*Formato*
-inteira (padrão) • crop • full • circle • round
-
-*Efeitos*
-bw • sepia • invert • flip • blur
-
-*Vídeo/GIF*
-fast • slow • rev • boomerang • static
-número = segundos (ex.: 6) • hq / lq = qualidade
-
-*Pack e emoji* (opcional, após |)
-.s crop 😎 | Meu Pack | Meu Nome
-
-*Exemplos*
-.s circle
-.s crop slow 5
-.s boomerang hq | Memes | Eu
-
-*Outros comandos*
-.sticker pack Nome | Autor → define o padrão
-.sticker pack reset
-.sticker auto on|off → tudo que eu mandar pro meu chat vira figurinha
-.sticker on|off|status
-.take [pack | autor] → responda uma figurinha
-.toimg → figurinha → imagem (doc p/ manter transparência)
-.togif | .tovideo → figurinha animada → GIF/vídeo
-.stickerinfo → dados da figurinha`;
+  return card('🎨 *FIGURINHAS — guia simples*', [
+    `Estado: ${stickerEnabled() ? '✅ liberadas' : '🔒 bloqueadas'} • automático no meu chat: ${stickerAutoEnabled() ? '✅ ligado' : '🔒 desligado'}`,
+    `📦 Pack: *${pack || '—'}* • ✍️ Autor: *${author || '—'}*`,
+    '',
+    '*1️⃣ COMO CRIAR*',
+    'Responda uma foto, vídeo, GIF ou figurinha com `.s`',
+    '(ou mande a mídia com `.s` escrito na legenda).',
+    'A figurinha sempre sai *preenchendo o quadradinho inteiro*.',
+    '',
+    '*2️⃣ MUDAR O FORMATO* (opcional)',
+    '`.s inteira` → mostra a imagem toda, com espacinho transparente em volta',
+    '`.s preencher` → quadrado cheio, cortando o que sobra (é o padrão)',
+    '`.s esticar` → estica a imagem até caber',
+    '`.s circulo` → deixa a figurinha redonda',
+    '`.s borda` → só arredonda os cantos',
+    '',
+    '*3️⃣ EFEITOS* (pode juntar: `.s circulo espelho`)',
+    '`.s pretoebranco` • `.s sepia` • `.s inverter`',
+    '`.s espelho` • `.s desfoque`',
+    '',
+    '*4️⃣ VÍDEO E GIF*',
+    '`.s rapido` / `.s lento` → muda a velocidade',
+    '`.s reverso` → roda de trás pra frente • `.s vaievem` → vai e volta',
+    '`.s parada` → só o primeiro quadro (vira foto)',
+    '`.s 5` → só os 5 primeiros segundos',
+    '`.s qualidade` → mais nítida • `.s leve` → arquivo menor',
+    '',
+    '*5️⃣ SEU NOME NA FIGURINHA*',
+    '`.s 😎 | Meu Pack | Meu Nome` → só nesta figurinha',
+    '`.sticker pack Nome | Autor` → define o padrão de todas',
+    '`.sticker pack reset` → volta ao padrão',
+    '',
+    '*6️⃣ OUTRAS FERRAMENTAS*',
+    '`.take Nome | Autor` → copia uma figurinha trocando o pack',
+    '`.toimg` → figurinha vira imagem (`.toimg doc` = arquivo com transparência)',
+    '`.togif` / `.tovideo` → figurinha animada vira GIF / vídeo',
+    '`.stickerinfo` → mostra pack, autor, tamanho e quadros',
+    '`.sticker auto on` → o que você mandar no seu próprio chat vira figurinha',
+    '`.sticker on` / `.sticker off` → liga / desliga'
+  ], { footer: true });
 }
 
 /* ───────────────────────── parser de opções ───────────────────────── */
@@ -113,8 +121,10 @@ const FLAG_TOKENS = {
 };
 const EMOJI_RE = /\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*/gu;
 
+const DEFAULT_FIT = FIT_TOKENS[strip(CONFIG.STICKER_FIT)] || 'crop';
+
 export function defaultOptions() {
-  return { fit: 'fit', fx: [], speed: 1, reverse: false, boomerang: false, static: false, quality: 'normal', seconds: null };
+  return { fit: DEFAULT_FIT, fx: [], speed: 1, reverse: false, boomerang: false, static: false, quality: 'normal', seconds: null };
 }
 
 /**
@@ -152,7 +162,7 @@ export function parseStickerArgs(text = '') {
   };
 }
 
-const hasVisualChange = (o) => o.fit !== 'fit' || o.fx.length > 0 || o.speed !== 1 || o.reverse || o.boomerang || o.static || o.seconds != null;
+const hasVisualChange = (o) => o.fit !== DEFAULT_FIT || o.fx.length > 0 || o.speed !== 1 || o.reverse || o.boomerang || o.static || o.seconds != null;
 
 /* ───────────────────────── filtros FFmpeg ───────────────────────── */
 
@@ -200,6 +210,19 @@ function ladder(animated, quality) {
   return L;
 }
 
+/**
+ * Variantes do filtro de vídeo, da mais completa para a mais simples.
+ * FFmpegs enxutos (alguns builds de Termux) não têm `geq`/`gblur`/etc.: em vez de
+ * falhar, o bot reencoded com uma versão mais simples e avisa no log.
+ */
+export function filterVariants(opts, ctx) {
+  const out = [buildFilter(opts, ctx)];
+  if (MASKS[opts.fit]) out.push(buildFilter({ ...opts, fit: 'crop' }, ctx));  // sem máscara (geq)
+  if (opts.fx.length) out.push(buildFilter({ ...opts, fx: [] }, ctx));        // sem efeitos
+  out.push(buildFilter({ ...defaultOptions(), fit: 'crop' }, ctx));           // último recurso
+  return [...new Set(out)];
+}
+
 /** Codifica `input` em WebP respeitando o limite de tamanho (adaptativo). */
 async function encode(input, dir, { animated, opts, seconds }) {
   const maxBytes = (animated ? CONFIG.STICKER_MAX_ANIMATED_KB : CONFIG.STICKER_MAX_STATIC_KB) * 1024;
@@ -207,28 +230,39 @@ async function encode(input, dir, { animated, opts, seconds }) {
   const steps = ladder(animated, opts.quality);
   let best = null;
   let attempts = 0;
+  let lastErr = null;
   for (let i = 0; i < steps.length;) {
     const s = steps[i];
     attempts++;
     const out = path.join(dir, `try-${attempts}.webp`);
-    const filter = buildFilter(opts, { animated, fps: s.fps });
     // Duração na ENTRADA (antes de speed/boomerang mudarem o tempo final).
     let inSeconds = (seconds * (s.cut || 1)) * (opts.speed || 1);
     if (opts.boomerang) inSeconds /= 2;
-    const args = [];
-    if (animated) args.push('-t', inSeconds.toFixed(2));
-    args.push('-i', input, '-vf', filter, '-an', '-sn', '-c:v', 'libwebp', '-lossless', '0', '-q:v', String(s.q), '-compression_level', animated ? '4' : '6', '-preset', 'default');
-    if (animated) args.push('-loop', '0', '-t', String(Math.ceil(seconds * 1.05 + 0.5)));
-    else args.push('-frames:v', '1');
-    args.push('-y', out);
-    await runFfmpeg(args, { timeoutMs: animated ? 150_000 : 60_000 });
+    const head = [];
+    if (animated) head.push('-t', inSeconds.toFixed(2));
+    head.push('-i', input);
+    const tail = ['-an', '-sn', '-c:v', 'libwebp', '-lossless', '0', '-q:v', String(s.q), '-compression_level', animated ? '4' : '6', '-preset', 'default'];
+    if (animated) tail.push('-loop', '0', '-t', String(Math.ceil(seconds * 1.05 + 0.5)));
+    else tail.push('-frames:v', '1');
+    tail.push('-y', out);
+    const variants = filterVariants(opts, { animated, fps: s.fps });
+    let encoded = false;
+    for (const vf of variants) {
+      try {
+        await runFfmpeg([...head, '-vf', vf, ...tail], { timeoutMs: animated ? 150_000 : 60_000 });
+        if (vf !== variants[0]) logger.warn({ vf }, 'filtro completo recusado pelo FFmpeg; usando versão simplificada');
+        encoded = true;
+        break;
+      } catch (e) { lastErr = e; }
+    }
+    if (!encoded) throw lastErr || new Error('não consegui codificar a figurinha');
     const buf = await readFile(out);
     if (!best || buf.length < best.buf.length) best = { buf, step: s };
     if (buf.length <= maxBytes) return { webp: buf, attempts, oversize: false };
     i += buf.length > maxBytes * 2.5 ? 2 : 1;
   }
   if (best && best.buf.length <= hardMax) return { webp: best.buf, attempts, oversize: true };
-  throw new Error(`não consegui reduzir a figurinha para menos de ${formatBytes(hardMax)}. Tente com \`lq\` ou uma duração menor (ex.: \`.s 4\`).`);
+  throw new Error(`não consegui reduzir a figurinha para menos de ${formatBytes(hardMax)}. Tente com \`.s leve\` ou uma duração menor (ex.: \`.s 4\`).`);
 }
 
 /* ───────────────────────── núcleo ───────────────────────── */
@@ -367,6 +401,7 @@ export async function createSticker(sock, msg, argText, { silent = false, lenien
 
 /** .take — troca o pack/autor de uma figurinha. */
 export async function takeSticker(sock, msg, argText = '') {
+  if (!stickerEnabled()) throw new Error('criação de figurinhas está bloqueada. Use `.sticker on`.');
   const q = getQuoted(msg);
   const media = q && getMediaNode(q.message);
   if (media?.type !== 'stickerMessage') throw new Error('responda uma *figurinha* com `.take Pack | Autor`.');

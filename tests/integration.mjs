@@ -99,7 +99,25 @@ const lastSticker=()=>sent.filter(x=>x.content?.sticker).at(-1).content;
   assert.equal(p.opts.fit,'circle'); assert.deepEqual(p.opts.fx,['bw']); assert.equal(p.opts.speed,0.5); assert.equal(p.opts.seconds,6);
   assert.deepEqual(p.emojis,['😎']); assert.equal(p.pack,'Meu Pack'); assert.equal(p.author,'Eu'); assert.equal(p.unknown.length,0);
   assert.deepEqual(ST.parseStickerArgs('círculo PRETO').unknown,['PRETO']);
-  assert.equal(ST.parseStickerArgs('').opts.fit,'fit');
+  // padrão: SEMPRE preencher o quadrado inteiro (figurinha completa)
+  assert.equal(ST.parseStickerArgs('').opts.fit,'crop');
+  assert.equal(ST.defaultOptions().fit,'crop');
+  assert.match(ST.buildFilter(ST.defaultOptions()),/force_original_aspect_ratio=increase/);
+  assert.match(ST.buildFilter(ST.defaultOptions()),/crop=512:512/);
+  assert.match(ST.buildFilter(ST.defaultOptions(),{animated:true}),/^fps=/);
+  // "inteira" continua disponível por escolha explícita
+  assert.equal(ST.parseStickerArgs('inteira').opts.fit,'fit');
+  assert.match(ST.buildFilter(ST.parseStickerArgs('inteira').opts),/pad=512:512/);
+  // plano B de filtros: build limitado recebe versão simplificada em vez de erro
+  assert.ok(ST.filterVariants(ST.parseStickerArgs('circle blur').opts).length>1,'faltou plano B de filtro');
+  assert.equal(ST.filterVariants(ST.defaultOptions()).length,1,'padrão não precisa de plano B');
+  const fb=ST.filterVariants(ST.parseStickerArgs('circle blur').opts);
+  assert.ok(!fb.at(-1).includes('geq')&&!fb.at(-1).includes('gblur'),'último recurso deveria ser simples');
+  // guia simples: explica cada coisa, sem jargão técnico
+  const help=ST.stickerHelp(sock);
+  for(const trecho of ['COMO CRIAR','preenchendo o quadradinho inteiro','MUDAR O FORMATO','EFEITOS','VÍDEO E GIF','SEU NOME NA FIGURINHA','OUTRAS FERRAMENTAS','.s inteira','.s circulo','.s leve','.take','.sticker auto on'])
+    assert.ok(help.includes(trecho),`guia sem "${trecho}"`);
+  assert.ok(!help.includes('EXIF')&&!help.includes('hq / lq'),'guia ainda tem jargão');
 }
 
 // imagem → figurinha estática com EXIF
@@ -230,8 +248,13 @@ ST.setStickerAuto(false);
   assert.match(sent.at(-1).content.text,/Padrao/);
   await cmd('.fig'); assert.equal(W.readStickerExif(lastSticker().sticker).pack,'Padrao');
   await cmd('.sticker auto on'); assert.equal(ST.stickerAutoEnabled(),true); await cmd('.sticker auto off');
-  await cmd('.menu figurinha'); assert.match(sent.at(-1).content.text,/STICKER ENGINE/);
+  await cmd('.menu figurinha'); assert.match(sent.at(-1).content.text,/FIGURINHAS — guia simples/);
   await cmd('.menu'); assert.match(sent.at(-1).content.text,/Figurinhas/);
+  // `.sticker` sozinho (sem mídia) abre o guia em vez de errar
+  await handleCommand(sock,baseMsg('menustk',{conversation:'.sticker'},true));
+  assert.match(sent.at(-1).content.text,/COMO CRIAR/);
+  // `.sticker` respondendo mídia continua criando figurinha
+  n=sent.length; await cmd('.sticker'); assert.ok(sent.slice(n).some(x=>x.content?.sticker),'.sticker com mídia deveria criar');
   await cmd('.s nãoexiste'); assert.match(sent.at(-1).content.text,/❌.*opção desconhecida/);
   await cmd('.sticker off'); await cmd('.s'); assert.match(sent.at(-1).content.text,/bloqueada/); await cmd('.sticker on');
   await cmd('.doctor'); assert.match(sent.at(-1).content.text,/WebP ✅/);

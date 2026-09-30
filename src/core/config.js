@@ -55,6 +55,8 @@ export const CONFIG = Object.freeze({
   AUTO_ARCHIVE: bool(process.env.AUTO_ARCHIVE, true),
   AUTO_EVENTS: bool(process.env.AUTO_EVENTS, true),
   DEFAULT_STICKER: bool(process.env.STICKER_DEFAULT, true),
+  // Formato padrão da figurinha: crop (preenche o quadrado inteiro), fit (imagem inteira), full, circle, round.
+  STICKER_FIT: process.env.STICKER_FIT || 'crop',
   MARK_ONLINE: bool(process.env.MARK_ONLINE, false),
   MAX_MEDIA_MB: num(process.env.MAX_MEDIA_MB, 80),
   KEEP_RAW_DAYS: num(process.env.KEEP_RAW_DAYS, 21),

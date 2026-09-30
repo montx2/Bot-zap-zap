@@ -84,7 +84,8 @@ export const CARD_LINE = '┄┄┄┄┄┄┄┄┄┄┄┄┄┄';
  * card('👁️ *VISUALIZAÇÃO ÚNICA*', ['👤 Ana','🕒 12:05'], { body:'legenda', footer:true })
  */
 export function card(title, rows = [], { body = '', footer = true } = {}) {
-  const parts = [title, CARD_LINE, ...rows.filter(Boolean)];
+  // '' é mantido (espaço entre seções); apenas null/undefined são descartados.
+  const parts = [title, CARD_LINE, ...rows.filter((r) => r != null)];
   if (body) parts.push('', body);
   if (footer && CONFIG.BRAND) parts.push(CARD_LINE, CONFIG.BRAND);
   return parts.join('\n');
