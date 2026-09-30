@@ -1,0 +1,21 @@
+node_modules/
+.env
+.data-local/
+data/*.db*
+data/auth/
+data/vault.key
+logs/*.log
+.tmp/
+storage/media/*
+storage/vault/*
+storage/black/*
+storage/status/*
+storage/exports/*
+storage/backups/*
+
+# Dados de runtime / sensíveis (não versionar)
+data/*.pid
+data/pairing-number.txt
+data/wa-web-version.json
+backups/
+.test-runtime/
