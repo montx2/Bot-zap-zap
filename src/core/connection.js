@@ -13,6 +13,7 @@ import { CONFIG } from './config.js';
 import { logger, consoleLog, createBaileysLogger } from './logger.js';
 import { getStoredMessage, saveEvent } from './db.js';
 import { handleCommand } from './commands.js';
+import { maybeAutoSticker } from '../modules/stickers.js';
 import { archiveIncoming } from '../modules/archive.js';
 import { detectSpecial } from '../modules/special.js';
 import { detectLinks } from '../modules/links.js';
@@ -591,7 +592,11 @@ async function handleIncoming(msg) {
     await onReaction(socket, msg);
   }
 
-  await handleCommand(socket, msg);
+  const handled = await handleCommand(socket, msg);
+
+  if (!handled) {
+    await maybeAutoSticker(socket, msg).catch(() => {});
+  }
 
   saveEvent({
     kind: 'message.processed',

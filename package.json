@@ -1,7 +1,7 @@
 {
   "name": "bot-zap-supremo",
-  "version": "6.0.3",
-  "description": "Bot pessoal WhatsApp Termux-first com recuperação resiliente de conexão, View Once, arquivo local, monitoramento de eventos, cofre, mídia e automações.",
+  "version": "6.1.0",
+  "description": "Bot pessoal WhatsApp Termux-first com recuperação resiliente de conexão, View Once, arquivo local, monitoramento de eventos, cofre, mídia, Sticker Engine 2.0 e automações.",
   "type": "module",
   "main": "src/main.js",
   "scripts": {

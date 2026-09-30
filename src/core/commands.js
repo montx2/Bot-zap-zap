@@ -6,7 +6,7 @@ import { ownerJid } from './identity.js';
 import { extractText, getQuoted, formatDate, formatBytes, truncate, isGroupJid } from './format.js';
 import * as DB from './db.js';
 import { viewOnceEnabled,setViewOnceEnabled,captureQuotedViewOnce } from '../modules/viewonce.js';
-import { stickerEnabled,setStickerEnabled,stickerHelp,createSticker } from '../modules/stickers.js';
+import { stickerEnabled,setStickerEnabled,stickerHelp,createSticker,takeSticker,stickerToImage,stickerInfo,setStickerAuto,stickerAutoEnabled,getPack,setPack,resetPack } from '../modules/stickers.js';
 import { saveQuotedToVault,vaultList } from '../modules/vault.js';
 import { convertQuoted } from '../modules/commandMedia.js';
 import { addTarget,removeTarget,allWatched,normalizeWatchTarget } from '../modules/watch.js';
@@ -17,24 +17,42 @@ import { stripTracking } from '../modules/links.js';
 import { featureNames,featureStatus,setFeature,setAll,isFeatureOn } from './features.js';
 import { readVaultItem } from '../modules/vault.js';
 import { openSecureFile } from './security.js';
+import { ffmpegCapabilities } from './media.js';
 
-const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n👁️ *View Once*\n.vo on|off|status\n.o → tenta recuperar a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo\n.media\n.links\n.events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save → cofre blindado\n.black list\n\n🎨 *Mídia*\n.sticker on|off|status\n.sticker → responde imagem/vídeo\n.ptt / .mp3 / .gif → responde mídia\n.hash → responde mídia\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número\n.network\n.patterns\n.stalk número\n\n👥 *Grupos*\n.groupinfo\n.admins\n.tagall [texto]\n\n📊 *Sistema*\n.stats\n.health\n.status\n.ping\n.id\n.check número\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.`;
+const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n🎨 *Figurinhas* (.menu figurinha)\n.s → imagem, vídeo, GIF ou figurinha (responda ou legenda)\n.s circle | crop | full | round\n.s bw | sepia | invert | flip | blur\n.s slow | fast | rev | boomerang | 6 (segundos)\n.s 😎 | Pack | Autor\n.take Pack | Autor → troca pack da figurinha\n.toimg • .togif • .tovideo • .stickerinfo\n.sticker pack Nome | Autor\n.sticker auto on|off\n\n🎞️ *Conversores*\n.gif • .mp4 • .ptt • .mp3 • .hash → respondendo mídia\n\n👁️ *View Once*\n.vo on|off|status\n.o → tenta recuperar a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo [limite]\n.media • .links • .events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save|list|get ID\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número • .network • .patterns • .stalk número\n\n👥 *Grupos*\n.groupinfo • .admins • .tagall [texto]\n\n🛠️ *Utilidades*\n.poll pergunta | opção | opção\n.cleanlink URL\n\n📊 *Sistema*\n.stats • .health • .status • .ping • .id • .check número\n.feature [nome on|off]\n.doctor • .backup\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.`;
 
 const send=async(sock,jid,c)=>{if(typeof sock.waitForSocketOpen==='function')await sock.waitForSocketOpen();return sock.sendMessage(jid,c);};
 
 export async function handleCommand(sock,msg){if(!msg?.key?.fromMe)return false;const text=extractText(msg.message);if(!text.startsWith(CONFIG.PREFIX))return false;const raw=text.slice(CONFIG.PREFIX.length).trim();if(!raw)return true;const [name,...args]=raw.split(/\s+/);const cmd=name.toLowerCase();const rest=raw.slice(name.length).trim();const jid=msg.key.remoteJid;try{
  switch(cmd){
-  case 'menu':case'help':await send(sock,jid,{text:HELP});break;
+  case 'menu':case'help':case'ajuda':{const t=(args[0]||'').toLowerCase();await send(sock,jid,{text:/^(fig|sticker|figurinha|s)$/.test(t)?stickerHelp(sock):HELP});break;}
   case 'ping':await send(sock,jid,{text:`🏓 *PONG*\nNode ${process.version}\nRSS ${Math.round(process.memoryUsage().rss/1048576)} MB`});break;
   case 'id':await send(sock,jid,{text:`🆔 ${jid}`});break;
   case 'status':await send(sock,jid,{text:statusText(sock)});break;
   case 'health':await send(sock,jid,{text:healthText(sock)});break;
   case 'viewonce':case'vo':{const a=(args[0]||'').toLowerCase();if(a==='on'){setViewOnceEnabled(true);await send(sock,jid,{text:'👁️ View Once: ✅ AUTO ON'});}else if(a==='off'){setViewOnceEnabled(false);await send(sock,jid,{text:'👁️ View Once: 🔒 OFF'});}else if(a==='status'){await send(sock,jid,{text:`👁️ View Once: ${viewOnceEnabled()?'✅ ON':'🔒 OFF'}`});}else{const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:'👁️ Não encontrei uma Visualização única recuperável na mensagem citada.'});}break;}
   case 'o':case'reveal':case'0':{const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:'👁️ Falha ao recuperar a mensagem citada.'});break;}
-  case 'sticker':{const a=(args[0]||'').toLowerCase();if(a==='on'){setStickerEnabled(true);await send(sock,jid,{text:'🎨 Stickers: ✅ LIBERADOS'});}else if(a==='off'){setStickerEnabled(false);await send(sock,jid,{text:'🎨 Stickers: 🔒 BLOQUEADOS'});}else if(a==='status'){await send(sock,jid,{text:stickerHelp()});}else await createSticker(sock,msg);break;}
+  case 'sticker':case'sticke':case's':case'fig':case'figurinha':case'stk':{
+    const a=(args[0]||'').toLowerCase();
+    if(a==='on'){setStickerEnabled(true);await send(sock,jid,{text:'🎨 Stickers: ✅ LIBERADOS'});}
+    else if(a==='off'){setStickerEnabled(false);await send(sock,jid,{text:'🎨 Stickers: 🔒 BLOQUEADOS'});}
+    else if(['status','help','ajuda','menu','opcoes','opções'].includes(a)){await send(sock,jid,{text:stickerHelp(sock)});}
+    else if(a==='auto'){const v=(args[1]||'').toLowerCase();if(v==='on'||v==='off'){setStickerAuto(v==='on');await send(sock,jid,{text:`🎨 Auto-sticker no chat comigo: ${v==='on'?'✅ ON — mande imagem/vídeo/GIF pra você mesmo':'🔒 OFF'}`});}else await send(sock,jid,{text:`🎨 Auto-sticker: ${stickerAutoEnabled()?'✅ ON':'🔒 OFF'}\nUse \`.sticker auto on|off\``});}
+    else if(a==='pack'||a==='autor'||a==='author'){
+      const tail=rest.slice(args[0].length).trim();
+      if(!tail){const p=getPack(sock);await send(sock,jid,{text:`📦 Pack: *${p.pack||'—'}*\n✍️ Autor: *${p.author||'—'}*\nUse \`.sticker pack Nome | Autor\` ou \`.sticker pack reset\``});}
+      else if(tail.toLowerCase()==='reset'){resetPack();const p=getPack(sock);await send(sock,jid,{text:`📦 Padrão restaurado: *${p.pack}* • *${p.author}*`});}
+      else{const [pk,au]=tail.split('|').map(x=>x.trim());if(a==='pack')setPack(pk||null,au!=null?au:null);else setPack(null,pk);const p=getPack(sock);await send(sock,jid,{text:`✅ Pack: *${p.pack}*\n✍️ Autor: *${p.author}*`});}
+    }
+    else if(a==='info'){await send(sock,jid,{text:await stickerInfo(sock,msg)});}
+    else await createSticker(sock,msg,rest);
+    break;}
+  case 'take':case'roubar':case'rename':await takeSticker(sock,msg,rest);break;
+  case 'toimg':case'img':case'toimage':await stickerToImage(sock,msg,{asDocument:/^(doc|png|documento)$/i.test(args[0]||'')});break;
+  case 'stickerinfo':case'stinfo':await send(sock,jid,{text:await stickerInfo(sock,msg)});break;
   case 'save':case'vault':await send(sock,jid,{text:await saveQuotedToVault(sock,msg,'vault')});break;
   case 'black':{const a=(args[0]||'').toLowerCase();if(a==='save')await send(sock,jid,{text:await saveQuotedToVault(sock,msg,'black')});else if(a==='list')await send(sock,jid,{text:vaultList(50)});else if(a==='get'){const r=DB.getVaultItem(args[1]);if(!r)throw new Error('item não encontrado');const b=await readVaultItem(r);if(r.mime==='text/plain')await send(sock,jid,{text:b.toString('utf8')});else await send(sock,jid,{document:b,fileName:`black-${r.id}.bin`,mimetype:r.mime||'application/octet-stream',caption:`🔐 Black Vault #${r.id}`});}else await send(sock,jid,{text:'Use `.black save`, `.black list` ou `.black get ID`.'});break;}
-  case 'find':case'search':{const parts=rest.trim().split(/\s+/).filter(Boolean);const lim=parts.length&&/^\d+$/.test(parts[-1])?Number(parts.pop()):50;const query=parts.join(' ');if(!query)throw new Error('use `.find termo`');const out=find(query,Math.min(100,lim));await send(sock,jid,{text:out?`🔎 *RESULTADOS*\n${out}`:`🔎 Nada encontrado para: ${rest}`});break;}
+  case 'find':case'search':{const parts=rest.trim().split(/\s+/).filter(Boolean);const lim=parts.length>1&&/^\d+$/.test(parts[parts.length-1])?Number(parts.pop()):50;const query=parts.join(' ');if(!query)throw new Error('use `.find termo`');const out=find(query,Math.min(100,lim));await send(sock,jid,{text:out?`🔎 *RESULTADOS*\n${out}`:`🔎 Nada encontrado para: ${rest}`});break;}
   case 'media':{if(args[0]==='get'){const r=DB.getMediaById(args[1]);if(!r)throw new Error('mídia não encontrada');const b=await openSecureFile(r.file_path);await sendMediaRow(sock,jid,r,b);break;}const rows=DB.listMedia(30);await send(sock,jid,{text:rows.length?`💾 *MÍDIAS*\n${rows.map(r=>`#${r.id} • ${r.kind} • ${formatBytes(r.bytes)}\n${r.remote_jid}\n${r.file_path}`).join('\n\n')}`:'💾 Nenhuma mídia arquivada.'});break;}
   case 'links':await send(sock,jid,{text:linkText(50)||'🔗 Nenhum link arquivado.'});break;
   case 'cleanlink':{const u=rest.trim();if(!u)throw new Error('use `.cleanlink URL`');await send(sock,jid,{text:stripTracking(u)});break;}
@@ -63,13 +81,14 @@ export async function handleCommand(sock,msg){if(!msg?.key?.fromMe)return false;
   case 'tagall':if(!isGroupJid(jid))throw new Error('use dentro de um grupo');await tagAll(sock,jid,rest||'📣 atenção');break;
   case 'ptt':await convertQuoted(sock,msg,'ptt');break;
   case 'mp3':await convertQuoted(sock,msg,'mp3');break;
-  case 'gif':await convertQuoted(sock,msg,'gif');break;
+  case 'gif':case'togif':await convertQuoted(sock,msg,'gif');break;
+  case 'tovideo':case'mp4':case'tovid':await convertQuoted(sock,msg,'mp4');break;
   case 'hash':{const q=getQuoted(msg);if(!q)throw new Error('responda uma mídia');const {downloadMediaMessage}=await import('@whiskeysockets/baileys');const b=await downloadMediaMessage(q,'buffer',{}, {reuploadRequest:sock.updateMediaMessage});const crypto=await import('node:crypto');await send(sock,jid,{text:`🔐 SHA-256\n${crypto.createHash('sha256').update(b).digest('hex')}\n${formatBytes(b.length)}`});break;}
   case 'poll':{const p=rest.split('|').map(s=>s.trim()).filter(Boolean);if(p.length<3)throw new Error('use `.poll pergunta | opção | opção`');await send(sock,jid,{poll:{name:p[0],values:p.slice(1,13),selectableCount:1}});break;}
   case 'export':await exportChat(sock,jid,Math.min(CONFIG.MAX_EXPORT,Number(args[0])||1000));break;
   case 'check':{const target=normalizeWatchTarget(args[0]);let about='';try{about=(await sock.fetchStatus?.(target))?.status||'';}catch{}let pp=false;try{pp=!!(await sock.profilePictureUrl(target,'image'));}catch{}await send(sock,jid,{text:`🔍 *CHECK*\n${target}\n📸 Foto: ${pp?'✅':'—'}\n📝 Status: ${about||'—'}\n\n⚠️ Não existe indicador confiável no protocolo para afirmar bloqueio apenas por ausência de foto/status.`});break;}
   case 'backup':{const {execFile}=await import('node:child_process');await new Promise((resolve,reject)=>execFile('bash',['scripts/backup.sh'],{cwd:CONFIG.ROOT},e=>e?reject(e):resolve()));await send(sock,jid,{text:'💾 Backup concluído em storage/backups.'});break;}
-  case 'doctor':await send(sock,jid,{text:`🩺 Node ${process.version}\nDB ${DB.stats().messages} mensagens\nFFmpeg é chamado sob demanda\nPasta: ${CONFIG.ROOT}`});break;
+  case 'doctor':{const ffCaps=await ffmpegCapabilities();await send(sock,jid,{text:`🩺 Node ${process.version}\nDB ${DB.stats().messages} mensagens\nFFmpeg: ${ffCaps.installed?`${ffCaps.version} • WebP ${ffCaps.webp?'✅':'❌'} • H264 ${ffCaps.h264?'✅':'❌'} • Opus ${ffCaps.opus?'✅':'❌'} • MP3 ${ffCaps.mp3?'✅':'❌'}`:'❌ não instalado'}\nPasta: ${CONFIG.ROOT}`});break;}
   default:await send(sock,jid,{text:`❓ .${cmd} não existe. Use .menu`});
  }
  return true;
