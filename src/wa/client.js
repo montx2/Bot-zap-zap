@@ -30,6 +30,7 @@ const VERSION_CACHE = path.join(DATA_DIR, 'wa-web-version.json');
 let socket = null;
 let stopping = false;
 let reconnectTimer = null;
+let pairingRound = 0;
 
 export function getSocket() {
   return socket;
@@ -236,23 +237,39 @@ export async function startClient(handlers = {}) {
 
   // pareamento por código (Termux sempre; desktop opcional)
   if (!state.creds.registered && pairingNumber) {
-    setTimeout(async () => {
-      try {
-        if (socket?.user || state.creds.registered) return;
-        log.info('solicitando código de pareamento…');
-        const code = await socket.requestPairingCode(pairingNumber);
-        banner([
-          '📱 CÓDIGO DE PAREAMENTO',
-          '',
-          `        ${code}`,
-          '',
-          'WhatsApp → Dispositivos conectados →',
-          'Conectar com número de telefone'
-        ]);
-      } catch (error) {
-        log.error(`código de pareamento falhou: ${error.message}`);
+    pairingRound++;
+    (async () => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if (stopping) return;
+        try {
+          if (typeof socket.waitForSocketOpen === 'function') {
+            await Promise.race([
+              socket.waitForSocketOpen(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout esperando o socket abrir')), 30_000))
+            ]);
+          }
+          if (socket?.user || state.creds.registered) return;
+          const code = await socket.requestPairingCode(pairingNumber);
+          const round = pairingRound;
+          banner([
+            '📱 CÓDIGO DE PAREAMENTO',
+            '',
+            `          ${code}`,
+            '',
+            round > 1 ? '⚠️ reconexão: o código ANTERIOR morreu,' : '⏱️ Digite este código em ATÉ 1 MINUTO.',
+            round > 1 ? 'use ESTE novo código agora!' : 'Se expirar, reinicie o bot e use o novo.',
+            '',
+            'WhatsApp → Dispositivos conectados →',
+            'Conectar com número de telefone'
+          ]);
+          return;
+        } catch (error) {
+          log.warn(`pareamento (tentativa ${attempt}/3): ${String(error?.message || error).slice(0, 120)}`);
+          await new Promise((r) => setTimeout(r, 5000));
+        }
       }
-    }, 4000);
+      log.error('não consegui registrar o código de pareamento. Verifique a internet e reinicie o bot — um código novo vai aparecer; digite-o imediatamente.');
+    })();
   }
 
   return socket;
