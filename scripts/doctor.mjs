@@ -11,4 +11,7 @@ const ff=spawnSync('ffmpeg',['-version'],{stdio:'ignore'});console.log(ff.status
 if(ff.status===0){const enc=spawnSync('ffmpeg',['-hide_banner','-encoders'],{encoding:'utf8'}).stdout||'';for(const [codec,what] of [['libwebp','figurinhas'],['libx264','.gif/.mp4'],['libopus','.ptt'],['libmp3lame','.mp3']])console.log(new RegExp(`\\b${codec}\\b`).test(enc)?`   ✅ ${codec} (${what})`:`   ⚠️ ${codec} ausente — ${what} não vão funcionar`);}
 console.log(fs.existsSync(path.join(root,'data','pairing-number.txt'))?'🔐 Número de pareamento: configurado':'ℹ️ Número de pareamento: ainda não configurado');
 console.log(fs.existsSync(path.join(root,'data','auth','creds.json'))?'🔗 Sessão: encontrada':'🔗 Sessão: ainda não pareada');
+{const df=spawnSync('df',['-Pk',root],{encoding:'utf8'});const free=Number((df.stdout||'').trim().split('\n').pop()?.split(/\s+/)[3])*1024;if(free){const gb=free/1024**3;console.log(gb<1?`⚠️ Pouco espaço livre: ${gb.toFixed(2)} GB (mídias e cofre ocupam disco)`:`💾 Espaço livre: ${gb.toFixed(1)} GB`);}}
+console.log(spawnSync('sh',['-c','command -v termux-wake-lock'],{stdio:'ignore'}).status===0?'🔋 termux-wake-lock: OK (bot fica vivo com a tela apagada)':'ℹ️ Instale `pkg install termux-api` (+ app Termux:API) para o bot usar wake-lock e não ser morto pelo Android.');
+console.log(fs.existsSync(path.join(root,'.env'))?'⚙️ .env: carregado':'ℹ️ Sem .env — usando padrões (copie .env.example para .env para personalizar).');
 console.log('✅ Estrutura Termux verificada.');

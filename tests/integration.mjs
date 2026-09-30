@@ -274,6 +274,37 @@ ST.setStickerAuto(false);
   await cmd('.status'); assert.match(sent.at(-1).content.text,/STATUS/);
   ST.resetPack(); assert.equal(ST.getPack(sock).pack,CONFIG.BRAND); assert.equal(ST.getPack(sock).author,'');
 }
+
+// ───────── Manutenção / retenção / .env ─────────
+{
+  const { runMaintenance }=await import('../src/core/maintenance.js');
+  const { CONFIG }=await import('../src/core/config.js');
+  const { handleCommand }=await import('../src/core/commands.js');
+  // mensagem antiga perde o raw_json, mas continua pesquisável; a recente é preservada
+  const old=baseMsg('old-raw',{conversation:'mensagem antiga pesquisavel'}); old.messageTimestamp=Math.floor((Date.now()-40*86400e3)/1000); archiveIncoming(old);
+  const fresh=baseMsg('fresh-raw',{conversation:'mensagem nova'}); archiveIncoming(fresh);
+  // mídia comum antiga é apagada (arquivo + linha); view-once e cofre nunca
+  const mk=(name)=>{const f=path.join(root,'storage','media',name);fs.mkdirSync(path.dirname(f),{recursive:true});fs.writeFileSync(f,'x'.repeat(100));return f;};
+  const fOld=mk('old.bin'), fNew=mk('new.bin'), fVo=mk('vo.bin');
+  DB.saveMedia({remoteJid:'a',messageId:'m-old',kind:'media',filePath:fOld,sha256:'1',bytes:100,createdAt:Date.now()-60*86400e3});
+  DB.saveMedia({remoteJid:'a',messageId:'m-new',kind:'media',filePath:fNew,sha256:'2',bytes:100});
+  DB.saveMedia({remoteJid:'a',messageId:'m-vo',kind:'view-once',filePath:fVo,sha256:'3',bytes:100,createdAt:Date.now()-400*86400e3});
+  const rep=await runMaintenance();
+  assert.ok(rep.raw>=1,'raw antigo deve ser compactado'); assert.equal(DB.getStoredMessage({remoteJid:old.key.remoteJid,id:'old-raw'}),null);
+  assert.ok(DB.getStoredMessage({remoteJid:fresh.key.remoteJid,id:'fresh-raw'}),'raw recente deve ficar');
+  assert.match(find('antiga pesquisavel',10),/antiga/);
+  assert.equal(fs.existsSync(fOld),false); assert.equal(fs.existsSync(fNew),true); assert.equal(fs.existsSync(fVo),true,'view-once nunca expira');
+  assert.equal(rep.media,1);
+  // rotação de log
+  fs.mkdirSync(CONFIG.LOG_DIR,{recursive:true}); const lg=path.join(CONFIG.LOG_DIR,'bot.log'); fs.writeFileSync(lg,Buffer.alloc(CONFIG.LOG_MAX_MB*1048576+10));
+  assert.equal((await runMaintenance()).log,true); assert.equal(fs.statSync(lg).size,0); assert.ok(fs.existsSync(lg+'.1'));
+  const cmd=t=>handleCommand(sock,baseMsg(`m-${Math.random()}`,{conversation:t},true,owner));
+  await cmd('.clean'); assert.match(sent.at(-1).content.text,/MANUTENÇÃO/);
+  // .env é carregado de verdade
+  const envDir=path.join(root,'envtest'); fs.mkdirSync(envDir,{recursive:true}); fs.writeFileSync(path.join(envDir,'.env'),'BOT_BRAND=marca teste\nSTICKER_MAX_SECONDS=7\n');
+  const r=spawnSync(process.execPath,['--input-type=module','-e',"const {CONFIG}=await import(process.argv[1]);console.log(CONFIG.BRAND+'|'+CONFIG.STICKER_MAX_SECONDS)",new URL('../src/core/config.js',import.meta.url).href],{env:{...process.env,BOT_ROOT:envDir},encoding:'utf8'});
+  assert.equal(r.stdout.trim(),'marca teste|7','.env deve ser lido');
+}
 // legado
 for(const [mode,out] of Object.entries({stickerVideo:'out-sticker.webp',gif:'out.mp4',mp3:'out.mp3',ptt:'out.ogg'})){const f=path.join(root,'data',out);await convertMedia(video,f,mode);assert.ok(fs.statSync(f).size>0,`FFmpeg ${mode} não gerou saída`);}
 

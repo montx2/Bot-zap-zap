@@ -142,6 +142,16 @@ O que o motor faz por você:
 
 > Quem tinha figurinhas bloqueadas (`.sticker off`) no motor antigo passa a ter o recurso liberado uma única vez na atualização; use `.sticker off` de novo se quiser bloquear.
 
+## 🔧 Uso 24h no Termux (1 aparelho)
+
+- **`.env` agora é lido de verdade.** Copie `cp .env.example .env` e edite (antes as variáveis eram ignoradas).
+- **Wake-lock:** `pkg install termux-api` (e o app *Termux:API*). O supervisor usa `termux-wake-lock` para o Android não matar o bot com a tela apagada. Desative a otimização de bateria do Termux nas configurações do Android.
+- **Manutenção automática diária** (ou `.clean` na hora): compacta mensagens antigas (`KEEP_RAW_DAYS`), expira mídias comuns (`MEDIA_KEEP_DAYS`, teto `MEDIA_MAX_GB`), poda eventos antigos, rotaciona o log (`LOG_MAX_MB`) e limpa temporários. **View Once e cofre nunca são apagados.**
+- **Backup** (`./bot.sh backup` / `.backup`): não inclui backups anteriores e mantém só os 5 mais recentes.
+- **Comandos antigos não reexecutam:** mensagens com mais de 2 min entregues em lote após uma queda de internet não disparam comandos.
+- **Sessão encerrada pelo WhatsApp:** o bot avisa no log e para (em vez de ficar em loop). Re-pareie: `./bot.sh stop && rm -rf data/auth && ./bot.sh pair 55DDDNUMERO && ./bot.sh start`.
+- `./bot.sh doctor` mostra FFmpeg/codecs, espaço livre, wake-lock e `.env`.
+
 ## Controle de módulos
 
 ```text

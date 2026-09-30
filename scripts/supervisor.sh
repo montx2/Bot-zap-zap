@@ -19,7 +19,18 @@ fi
 
 echo $$ > "$PIDFILE"
 
+# Mantém o Termux vivo com a tela apagada (precisa do app/pacote termux-api; opcional).
+if command -v termux-wake-lock >/dev/null 2>&1; then termux-wake-lock 2>/dev/null || true; fi
+
+rotate_log() {
+  local max=$((10*1024*1024))
+  if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt "$max" ]; then
+    mv -f "$LOG" "$LOG.1" 2>/dev/null || true
+  fi
+}
+
 cleanup() {
+  if command -v termux-wake-unlock >/dev/null 2>&1; then termux-wake-unlock 2>/dev/null || true; fi
   if [ -n "$NODE_PID" ] && kill -0 "$NODE_PID" 2>/dev/null; then
     kill -TERM "$NODE_PID" 2>/dev/null || true
     sleep 1
@@ -35,6 +46,7 @@ trap 'exit 143' INT TERM
 backoff=2
 
 while true; do
+  rotate_log
   started_at=$(date +%s)
 
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [supervisor] iniciando Node" | tee -a "$LOG"

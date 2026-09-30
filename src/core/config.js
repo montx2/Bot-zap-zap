@@ -2,6 +2,9 @@ import process from 'node:process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Carrega o .env (não sobrescreve variáveis já definidas no ambiente).
+try { process.loadEnvFile?.(path.join(path.resolve(process.env.BOT_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')), '.env')); } catch { /* .env é opcional */ }
+
 const ROOT = path.resolve(process.env.BOT_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'));
 const bool = (v, fallback) => v == null ? fallback : /^(1|true|on|yes)$/i.test(String(v));
 const num = (v, fallback) => Number.isFinite(Number(v)) ? Number(v) : fallback;
@@ -55,6 +58,9 @@ export const CONFIG = Object.freeze({
   MARK_ONLINE: bool(process.env.MARK_ONLINE, false),
   MAX_MEDIA_MB: num(process.env.MAX_MEDIA_MB, 80),
   KEEP_RAW_DAYS: num(process.env.KEEP_RAW_DAYS, 21),
+  MEDIA_KEEP_DAYS: num(process.env.MEDIA_KEEP_DAYS, 30),
+  MEDIA_MAX_GB: num(process.env.MEDIA_MAX_GB, 4),
+  LOG_MAX_MB: num(process.env.LOG_MAX_MB, 10),
   MAX_EXPORT: 5000,
   STICKER_MAX_SECONDS_LIMIT: 15,
   STICKER_MAX_SECONDS: Math.min(15, Math.max(1, num(process.env.STICKER_MAX_SECONDS, 10))),

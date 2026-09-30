@@ -32,6 +32,7 @@ import { onForward } from '../modules/forward.js';
 import { handleGroupEvent } from '../modules/groups.js';
 import { handleStatus } from '../modules/status.js';
 import { ownerJid } from './identity.js';
+import { tsMs } from './format.js';
 import { isFeatureOn } from './features.js';
 import { SerialQueues } from './queue.js';
 
@@ -55,6 +56,7 @@ const state = {
 };
 
 const incomingQueues = new SerialQueues();
+const COMMAND_MAX_AGE_MS = 2 * 60_000;
 
 const VERSION_CACHE_FILE = path.join(CONFIG.DATA_DIR, 'wa-web-version.json');
 const FALLBACK_TIMEOUT_MS = 15_000;
@@ -438,6 +440,16 @@ export async function connect() {
         clearRecoveryTimers();
         socket = null;
 
+        if (fatal) {
+          consoleLog(
+            '\n❌ Sessão do WhatsApp encerrada (code ' + code + ').\n' +
+              '   Pare o bot, apague a pasta data/auth e pareie de novo:\n' +
+              '   ./bot.sh stop && rm -rf data/auth && ./bot.sh pair 55DDDNUMERO && ./bot.sh start\n'
+          );
+          // Encerra limpo (SIGTERM → exit 0): o supervisor não reinicia em loop uma sessão que precisa de novo pareamento.
+          setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500).unref?.();
+        }
+
         if (!stopping && !fatal) {
           state.reconnects += 1;
 
@@ -592,10 +604,15 @@ async function handleIncoming(msg) {
     await onReaction(socket, msg);
   }
 
-  const handled = await handleCommand(socket, msg);
+  // Comandos antigos (mensagens entregues em lote depois de uma queda/reconexão) não são reexecutados.
+  const fresh = Date.now() - tsMs(msg.messageTimestamp) < COMMAND_MAX_AGE_MS;
 
-  if (!handled) {
-    await maybeAutoSticker(socket, msg).catch(() => {});
+  if (fresh) {
+    const handled = await handleCommand(socket, msg);
+
+    if (!handled) {
+      await maybeAutoSticker(socket, msg).catch(() => {});
+    }
   }
 
   saveEvent({
