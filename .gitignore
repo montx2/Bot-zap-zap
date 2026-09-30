@@ -5,6 +5,7 @@ data/cache/
 data/tmp/
 data/config.json
 data/pairing-number.txt
+data/pairing-code.txt
 data/wa-web-version.json
 data/messages.json
 logs/

@@ -25,12 +25,14 @@ import { isTermux, platformBanner } from '../core/platform.js';
 
 const AUTH_DIR = path.join(DATA_DIR, 'auth');
 const PAIR_FILE = path.join(DATA_DIR, 'pairing-number.txt');
+const PAIR_CODE_FILE = path.join(DATA_DIR, 'pairing-code.txt');
 const VERSION_CACHE = path.join(DATA_DIR, 'wa-web-version.json');
 
 let socket = null;
 let stopping = false;
 let reconnectTimer = null;
-let pairingRound = 0;
+let pairingRequestedAt = 0;
+let pairingRequestInProgress = false;
 
 export function getSocket() {
   return socket;
@@ -136,6 +138,28 @@ function printQR(qr) {
     });
 }
 
+async function waitForSocketOpen(clientSocket) {
+  if (typeof clientSocket.waitForSocketOpen !== 'function') {
+    throw new Error('esta versão do Baileys não expõe waitForSocketOpen()');
+  }
+
+  let timeout;
+  try {
+    await Promise.race([
+      clientSocket.waitForSocketOpen(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('timeout esperando o socket abrir')), 30_000);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const canRequestPairingCode = () =>
+  !pairingRequestedAt || Date.now() - pairingRequestedAt > 120_000;
+
 /**
  * Inicia (ou reinicia) o socket do Baileys.
  * @param {object} handlers { onOpen, onMessage, onClosing }
@@ -149,7 +173,7 @@ export async function startClient(handlers = {}) {
 
   const pairingNumber = await getPairingNumber(state.creds);
 
-  socket = makeWASocket({
+  const clientSocket = makeWASocket({
     version,
     // sem sessão ainda: dá tempo para o pareamento antes de reconectar
     connectTimeoutMs: state.creds.registered ? 45_000 : 150_000,
@@ -168,10 +192,12 @@ export async function startClient(handlers = {}) {
     emitOwnEvents: true,
     logger: baileysLogger
   });
+  socket = clientSocket;
 
-  socket.ev.on('creds.update', saveCreds);
+  clientSocket.ev.on('creds.update', saveCreds);
 
-  socket.ev.on('connection.update', (update) => {
+  clientSocket.ev.on('connection.update', (update) => {
+    if (socket !== clientSocket) return;
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -183,7 +209,10 @@ export async function startClient(handlers = {}) {
     }
 
     if (connection === 'open') {
-      const user = socket.user;
+      const user = clientSocket.user;
+      try {
+        fs.rmSync(PAIR_CODE_FILE, { force: true });
+      } catch {}
       banner([
         '⚡ N E X U S  B O T ⚡',
         '',
@@ -191,7 +220,7 @@ export async function startClient(handlers = {}) {
         platformBanner(),
         'Digite .menu no WhatsApp para começar 🚀'
       ]);
-      handlers.onOpen?.(socket);
+      handlers.onOpen?.(clientSocket);
     }
 
     if (connection === 'close') {
@@ -213,10 +242,11 @@ export async function startClient(handlers = {}) {
     }
   });
 
-  socket.ev.on('messages.upsert', async ({ messages, type }) => {
+  clientSocket.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (socket !== clientSocket) return;
     for (const msg of messages) {
       try {
-        await handlers.onMessage?.(socket, msg, type);
+        await handlers.onMessage?.(clientSocket, msg, type);
       } catch (error) {
         log.error('erro no handler de mensagem', error);
       }
@@ -224,40 +254,70 @@ export async function startClient(handlers = {}) {
   });
 
   // pedidos de mídia antiga (placeholders etc.)
-  socket.ev.on('messages.update', async (updates) => {
+  clientSocket.ev.on('messages.update', async (updates) => {
+    if (socket !== clientSocket) return;
     for (const { key, update } of updates || []) {
       const proto = update?.message?.protocolMessage;
       if (proto && (proto.type === 0 || proto.type === 'REVOKE')) {
         try {
-          await handlers.onMessage?.(socket, { key, message: { protocolMessage: proto }, messageTimestamp: Date.now() / 1000 }, 'update');
+          await handlers.onMessage?.(clientSocket, { key, message: { protocolMessage: proto }, messageTimestamp: Date.now() / 1000 }, 'update');
         } catch {}
       }
     }
   });
 
-  // pareamento por código (Termux sempre; desktop opcional)
+  // Pareamento por código (Termux sempre; desktop opcional). O código é
+  // reutilizado por até 2 minutos: reconexões curtas não devem invalidá-lo.
   if (!state.creds.registered && pairingNumber) {
-    pairingRound++;
     (async () => {
+      if (!canRequestPairingCode()) {
+        log.info('pareamento já solicitado há menos de 2 minutos; mantendo o código existente (data/pairing-code.txt).');
+        return;
+      }
+
       for (let attempt = 1; attempt <= 3; attempt++) {
-        if (stopping) return;
+        if (stopping || socket !== clientSocket || state.creds.registered) return;
         try {
-          if (typeof socket.waitForSocketOpen === 'function') {
-            await Promise.race([
-              socket.waitForSocketOpen(),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout esperando o socket abrir')), 30_000))
-            ]);
+          await waitForSocketOpen(clientSocket);
+          if (stopping || socket !== clientSocket || clientSocket.user || state.creds.registered) return;
+
+          // Serializa pedidos quando uma reconexão começa enquanto o anterior
+          // ainda está aguardando a resposta do WhatsApp.
+          while (pairingRequestInProgress) {
+            if (stopping || socket !== clientSocket || state.creds.registered) return;
+            if (!canRequestPairingCode()) {
+              log.info('o código recente segue válido; não vou pedir outro nesta reconexão.');
+              return;
+            }
+            await sleep(100);
           }
-          if (socket?.user || state.creds.registered) return;
-          const code = await socket.requestPairingCode(pairingNumber);
-          const round = pairingRound;
+          if (!canRequestPairingCode()) {
+            log.info('o código recente segue válido; não vou pedir outro nesta reconexão.');
+            return;
+          }
+
+          pairingRequestInProgress = true;
+          let code;
+          try {
+            code = await clientSocket.requestPairingCode(pairingNumber);
+            pairingRequestedAt = Date.now();
+          } finally {
+            pairingRequestInProgress = false;
+          }
+
+          try {
+            fs.writeFileSync(PAIR_CODE_FILE, `${code}\n`, { mode: 0o600 });
+            fs.chmodSync(PAIR_CODE_FILE, 0o600);
+          } catch (error) {
+            log.warn(`não consegui salvar o código em data/pairing-code.txt: ${error.message}`);
+          }
+
           banner([
             '📱 CÓDIGO DE PAREAMENTO',
             '',
             `          ${code}`,
             '',
-            round > 1 ? '⚠️ reconexão: o código ANTERIOR morreu,' : '⏱️ Digite este código em ATÉ 1 MINUTO.',
-            round > 1 ? 'use ESTE novo código agora!' : 'Se expirar, reinicie o bot e use o novo.',
+            '⏱️ VALE ~1 MINUTO: DIGITE AGORA.',
             '',
             'WhatsApp → Dispositivos conectados →',
             'Conectar com número de telefone'
@@ -265,14 +325,15 @@ export async function startClient(handlers = {}) {
           return;
         } catch (error) {
           log.warn(`pareamento (tentativa ${attempt}/3): ${String(error?.message || error).slice(0, 120)}`);
-          await new Promise((r) => setTimeout(r, 5000));
+          if (stopping || socket !== clientSocket) return;
+          if (attempt < 3) await sleep(5000);
         }
       }
-      log.error('não consegui registrar o código de pareamento. Verifique a internet e reinicie o bot — um código novo vai aparecer; digite-o imediatamente.');
+      log.error('não consegui registrar o código de pareamento após 3 tentativas. Verifique a internet e tente novamente.');
     })();
   }
 
-  return socket;
+  return clientSocket;
 }
 
 function scheduleReconnect(handlers, delayMs, code) {
