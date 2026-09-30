@@ -71,6 +71,8 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 ## Comandos principais
 
+Dentro do chat, `.menu` mostra tudo organizado por *o que você quer fazer* (figurinha, ver o que só aparece uma vez, transformar mídia, achar e guardar, monitorar alguém, grupo, extras) — cada linha explica o que o comando faz. `.menu figurinha` abre o guia completo de figurinhas.
+
 ```text
 .menu
 .vo                  # painel da visualização única
@@ -84,7 +86,7 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 .events
 .save                # guardar a mensagem citada no cofre
 .black save|list|get ID
-.s                   # figurinha (responde ou legenda) — SEMPRE preenche o quadradinho
+.s                   # figurinha (responde ou legenda) — imagem inteira, sem cortar
 .gif | .mp4 | .ptt | .mp3   # responder mídia
 .toimg | .take | .stickerinfo   # veja a seção Figurinhas
 .hash
@@ -111,14 +113,15 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 Liberado por padrão. Responda uma mídia com `.s` — ou envie a imagem/vídeo/GIF já com `.s` na legenda. Aceita imagem, vídeo, GIF, figurinha (estática ou animada) e documento de imagem/vídeo.
 
-**A figurinha sempre sai preenchendo o quadradinho inteiro** — sem bordas vazias. Vale para
-foto, vídeo, GIF, documento e figurinha: basta `.s` puro. Se a figurinha de entrada tiver faixa
-transparente sobrando, o bot mede e corta o excesso antes de escalar. Quer a imagem inteira com
-espacinho transparente? Escreva `.s inteira`.
+**A figurinha sempre mostra a imagem INTEIRA** — rosto, bicho, objeto: nada é cortado. A imagem é
+só redimensionada para caber no quadrado 512×512 e centralizada (com espacinho transparente em
+volta quando sobra). Vale para foto, vídeo, GIF, documento e figurinha: basta `.s` puro. Se você
+preferir o quadrado 100% preenchido (cortando o que sobra), escreva `.s preencher`.
 
 ```text
-.s                     # padrão: quadrado 100% preenchido (corta o que sobra)
-.s inteira             # imagem inteira, com borda transparente
+.s                     # padrão: imagem inteira, sem cortar (borda transparente se sobrar)
+.s inteira             # imagem inteira (mesma coisa do padrão)
+.s preencher           # quadrado 100% preenchido, cortando o que sobra
 .s esticar             # estica para 512×512
 .s circulo | .s borda  # redonda / cantos arredondados (borda suave)
 .s pretoebranco | sepia | inverter | espelho | desfoque   # efeitos (combináveis)
@@ -141,7 +144,7 @@ Os comandos em inglês (`crop`, `full`, `circle`, `round`, `bw`, `sepia`, `inver
 
 O que o motor faz por você:
 
-- **Figurinha completa**: por padrão a imagem é cortada até preencher os 512×512 — nunca sobra borda vazia. Figurinhas que já vêm com faixa transparente são medidas (caixa opaca) e recortadas; figurinha que já preenche vai por atalho instantâneo (só troca o pack, sem re-encode).
+- **Nada de corte**: por padrão a imagem inteira é dimensionada para caber no 512×512 (centralizada, com transparência em volta) — rosto, animal e objeto continuam aparecendo por completo. Quem pede `.s preencher` tem o quadrado cheio: aí sim o bot mede a caixa opaca da figurinha de entrada e recorta o excesso antes de escalar. Figurinha que já preenche vai por atalho instantâneo (só troca o pack, sem re-encode).
 - **Compressão adaptativa**: se a figurinha passa de 100 KB (estática) ou 500 KB (animada), o bot baixa qualidade/FPS/duração automaticamente até caber.
 - **Pack e autor de verdade**: gravados no EXIF do WebP (em JavaScript puro, sem `webpmux`).
 - **Figurinha animada → qualquer coisa**: o FFmpeg 7.0 não lê WebP animado, então o bot decodifica e compõe os frames sozinho.
@@ -149,7 +152,7 @@ O que o motor faz por você:
 - Reações ⏳ → (some) / ❌ na mensagem do comando, fila de uma conversão por vez (poupa o celular) e limpeza automática de temporários.
 - Pack padrão: **by 𝖒𝖔𝖓𝖙𝖝2_** (sem autor, visual limpo). Ajustes por `.env`: `BOT_BRAND`, `STICKER_PACK`, `STICKER_AUTHOR`, `STICKER_MAX_SECONDS`, `STICKER_MAX_STATIC_KB`, `STICKER_MAX_ANIMATED_KB`, `STICKER_REACT`, `STICKER_AUTO_SELF`.
 
-O formato padrão pode ser trocado no `.env` com `STICKER_FIT` (`crop`, `fit`, `full`, `circle` ou `round`).
+O formato padrão pode ser trocado no `.env` com `STICKER_FIT` (`fit` — imagem inteira, é o padrão —, `crop`, `full`, `circle` ou `round`).
 
 > Quem tinha figurinhas bloqueadas (`.sticker off`) no motor antigo passa a ter o recurso liberado uma única vez na atualização; use `.sticker off` de novo se quiser bloquear.
 

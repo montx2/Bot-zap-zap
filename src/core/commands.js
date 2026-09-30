@@ -3,7 +3,7 @@ import path from 'node:path';
 import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import { ownerJid } from './identity.js';
-import { extractText, getQuoted, formatDate, formatBytes, truncate, isGroupJid, card } from './format.js';
+import { extractText, getQuoted, formatDate, formatBytes, truncate, isGroupJid, card, CARD_LINE } from './format.js';
 import * as DB from './db.js';
 import { viewOnceEnabled,setViewOnceEnabled,captureQuotedViewOnce,viewOncePanel,listCaptures,sendCapture } from '../modules/viewonce.js';
 import { stickerEnabled,setStickerEnabled,stickerHelp,createSticker,takeSticker,stickerToImage,stickerInfo,setStickerAuto,stickerAutoEnabled,getPack,setPack,resetPack,findSource } from '../modules/stickers.js';
@@ -20,7 +20,59 @@ import { openSecureFile } from './security.js';
 import { ffmpegCapabilities } from './media.js';
 import { runMaintenance } from './maintenance.js';
 
-const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n🎨 *Figurinhas* (.menu figurinha)\n.s → responda ou legende foto/vídeo/GIF/figurinha (sempre preenche o quadrado)\n.s inteira | preencher | esticar | circulo | borda\n.s pretoebranco | sepia | inverter | espelho | desfoque\n.s rapido | lento | reverso | vaievem | parada | 5 | qualidade | leve\n.s 😎 | Pack | Autor\n.take • .toimg • .togif • .tovideo • .stickerinfo\n.sticker pack Nome | Autor • .sticker auto on|off • .sticker on|off\n\n🎞️ *Conversores*\n.gif • .mp4 • .ptt • .mp3 • .hash → respondendo mídia\n\n👁️ *Visualização única*\n.vo → painel\n.vo on|off\n.vo list • .vo get ID\n.o ou .wow → recupera a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo [limite]\n.media • .links • .events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save|list|get ID\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número • .network • .patterns • .stalk número\n\n👥 *Grupos*\n.groupinfo • .admins • .tagall [texto]\n\n🛠️ *Utilidades*\n.poll pergunta | opção | opção\n.cleanlink URL\n\n📊 *Sistema*\n.stats • .health • .status • .ping • .id • .check número\n.feature [nome on|off]\n.doctor • .backup • .clean\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.\n\n${CONFIG.BRAND}`;
+const LINE=CARD_LINE;
+// seção do menu: título curto + linhas de uma ideia só (cada uma explica o que o comando faz)
+const sec=(titulo,linhas)=>['',LINE,`${titulo}`,...linhas];
+const HELP=card('🔥 *BOT-ZAP — MENU*',[
+  '*Como usar*',
+  '▸ Responda uma foto, vídeo ou mensagem com o comando',
+  '▸ ou mande a mídia com o comando escrito na legenda',
+  '▸ todo comando começa com ponto: `.s`, `.vo`, `.find`...',
+  ...sec('🎨 *Figurinhas*',[
+    '`.s` → transforma em figurinha (imagem inteira, sem cortar)',
+    '`.s preencher` → quadrado cheio, cortando o que sobra',
+    '`.s circulo` • `.s borda` • `.s esticar` → outros formatos',
+    '`.s pretoebranco` • `.s sepia` • `.s espelho` • `.s desfoque`',
+    '`.s rapido` • `.s lento` • `.s reverso` • `.s parada`',
+    '`.sticker pack Nome | Autor` → seu nome em todas',
+    '`.take` • `.toimg` • `.togif` • `.stickerinfo`',
+    '📖 guia completo: `.menu figurinha`'
+  ]),
+  ...sec('👁️ *Ver o que só aparece uma vez*',[
+    '`.vo` → painel (liga/desliga o automático)',
+    '`.o` → responda a mensagem pra recuperar'
+  ]),
+  ...sec('🎞️ *Transformar mídia*',[
+    'Responda um vídeo, áudio, GIF ou figurinha animada com:',
+    '`.gif` • `.mp4` • `.ptt` • `.mp3` • `.hash`'
+  ]),
+  ...sec('💾 *Achar e guardar*',[
+    '`.find termo` → procura em tudo que já chegou',
+    '`.media` • `.links` • `.events` → o que foi arquivado',
+    '`.save` → guarda a citada • `.black save` → guarda escondida',
+    '`.export` → baixa a conversa • `.recover` → resgata apagada',
+    '`.edits` → histórico de edições (responda a mensagem)'
+  ]),
+  ...sec('👀 *Monitorar alguém*',[
+    '`.watch add número Nome` → começa a vigiar',
+    '`.watch list` → quem está na lista • `.watch rm número`',
+    '`.profile número` → foto e recado da pessoa',
+    '`.check número` → a pessoa tem WhatsApp?',
+    '`.stalk número` → relatório completo'
+  ]),
+  ...sec('👥 *No grupo*',[
+    '`.groupinfo` • `.admins` • `.tagall texto`',
+    '`.poll pergunta | opção | opção` → enquete'
+  ]),
+  ...sec('🛠️ *Extras e sistema*',[
+    '`.cleanlink URL` → link sem rastreio',
+    '`.ping` • `.status` • `.stats` • `.health`',
+    '`.feature` → o que está ligado/desligado',
+    '`.doctor` • `.backup` • `.clean`'
+  ]),
+  '',LINE,
+  'Só a conta dona (você) executa os comandos.'
+],{footer:true});
 
 const send=async(sock,jid,c)=>{if(typeof sock.waitForSocketOpen==='function')await sock.waitForSocketOpen();return sock.sendMessage(jid,c);};
 
