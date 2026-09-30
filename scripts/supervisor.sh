@@ -9,7 +9,8 @@ mkdir -p logs data
 LOG="$ROOT/logs/bot.log"
 PIDFILE="$ROOT/data/supervisor.pid"
 NODEPIDFILE="$ROOT/data/node.pid"
-NODE="$PREFIX/bin/node"
+NODE="${PREFIX:-}/bin/node"
+[ -x "$NODE" ] || NODE="$(command -v node || echo node)"
 NODE_PID=""
 
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then

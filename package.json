@@ -10,6 +10,7 @@
     "doctor": "node scripts/doctor.mjs",
     "test": "node scripts/selftest.mjs",
     "integration-test": "rm -rf .test-runtime; BOT_ROOT=$PWD/.test-runtime node --loader ./tests/mock-loader.mjs ./tests/integration.mjs; code=$?; rm -rf .test-runtime; exit $code",
+    "connection-test": "rm -rf .test-runtime; BOT_ROOT=$PWD/.test-runtime node --no-warnings --loader ./tests/sim-loader.mjs ./tests/connection-sim.mjs; code=$?; rm -rf .test-runtime; exit $code",
     "connection-smoke": "node scripts/connection-smoke.mjs"
   },
   "engines": {

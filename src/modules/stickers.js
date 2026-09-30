@@ -188,14 +188,18 @@ export function buildFilter(opts, { animated, fps = 15, trim = null } = {}) {
   const f = [];
   // Em "fast" amostra mais rápido na entrada; em "slow" duplica frames depois do setpts.
   if (animated) f.push(`fps=${fps * Math.max(1, opts.speed)}`);
+  // Recorta o que sobra (banda transparente) ANTES de escalar — só nos modos que preenchem (entrada já é RGBA).
+  if (trim) f.push('format=rgba', `crop=${trim.w}:${trim.h}:${trim.x}:${trim.y}`);
+  // Desempenho: reduz para 512 px NO FORMATO NATIVO do vídeo (yuv = ~2,6x menos bytes que RGBA)
+  // e só depois converte para RGBA. Em vídeo, bicúbico é bem mais leve que lanczos e visualmente igual em 512 px.
+  const flags = animated ? 'bicubic' : 'lanczos';
+  const fill = opts.fit === 'crop' || opts.fit === 'circle' || opts.fit === 'round';
+  if (opts.fit === 'full') f.push(`scale=${SIZE}:${SIZE}:flags=${flags}`);
+  else if (fill) f.push(`scale=${SIZE}:${SIZE}:force_original_aspect_ratio=increase:flags=${flags}`, `crop=${SIZE}:${SIZE}`);
+  else f.push(`scale=${SIZE}:${SIZE}:force_original_aspect_ratio=decrease:flags=${flags}`);
   f.push('format=rgba');
-  // Recorta o que sobra (banda transparente) ANTES de escalar — só nos modos que preenchem.
-  if (trim) f.push(`crop=${trim.w}:${trim.h}:${trim.x}:${trim.y}`);
   for (const fx of opts.fx) f.push(FX_FILTERS[fx]);
-  f.push('format=rgba');
-  if (opts.fit === 'full') f.push(`scale=${SIZE}:${SIZE}:flags=lanczos`);
-  else if (opts.fit === 'crop' || opts.fit === 'circle' || opts.fit === 'round') f.push(`scale=${SIZE}:${SIZE}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${SIZE}:${SIZE}`);
-  else f.push(`scale=${SIZE}:${SIZE}:force_original_aspect_ratio=decrease:flags=lanczos`, `pad=${SIZE}:${SIZE}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`);
+  if (!fill && opts.fit !== 'full') f.push(`pad=${SIZE}:${SIZE}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`);
   f.push('setsar=1');
   if (MASKS[opts.fit]) f.push(MASKS[opts.fit]);
   if (animated) {
@@ -484,7 +488,8 @@ export async function createSticker(sock, msg, argText, { silent = false, lenien
   const def = getPack(sock);
   const cfg = { opts: parsed.opts, pack: parsed.pack ?? def.pack, author: parsed.author ?? def.author, emojis: parsed.emojis };
 
-  if (!silent) await react(sock, msg, '⏳');
+  // Reação ⏳ sem esperar a resposta do WhatsApp: a conversão já começa enquanto ela vai.
+  const waiting = silent ? null : react(sock, msg, '⏳');
   try {
     const result = await queue.run('sticker', async () => {
       const buffer = await download(sock, source.holder);
@@ -492,10 +497,10 @@ export async function createSticker(sock, msg, argText, { silent = false, lenien
       return buildSticker(buffer, { kind: source.cls.kind, mime: source.media.node?.mimetype }, cfg);
     });
     await sock.sendMessage(jid, { sticker: result.webp, isAnimated: result.animated, mimetype: 'image/webp', width: SIZE, height: SIZE });
-    if (!silent) await react(sock, msg, '');
+    if (!silent) { await waiting; await react(sock, msg, ''); }
     return `${result.animated ? 'figurinha animada' : 'figurinha'} ${formatBytes(result.bytes)}${result.oversize ? ' (acima do ideal)' : ''}`;
   } catch (e) {
-    if (!silent) await react(sock, msg, '❌');
+    if (!silent) { await waiting; await react(sock, msg, '❌'); }
     throw e;
   }
 }

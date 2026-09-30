@@ -12,3 +12,5 @@ storage/black/*
 storage/status/*
 storage/exports/*
 storage/backups/*
+data/bot.lock
+data/auth-backup-*/

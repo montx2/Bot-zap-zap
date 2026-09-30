@@ -40,8 +40,37 @@ case "$cmd" in
       rm -f data/supervisor.pid
     fi
 
-    # Limpa somente processos do Bot-Zap lançados pelo supervisor.
+    # Junta TODOS os Node deste bot: o do supervisor, o da trava e qualquer `npm start`/`node src/main.js`
+    # aberto à mão (duas cópias na mesma sessão derrubam uma à outra: "conflict / replaced").
+    pids=""
+    for f in data/node.pid data/bot.lock; do
+      [ -f "$f" ] && pids="$pids $(cat "$f" 2>/dev/null)"
+    done
+    for p in $(pgrep -f 'src/main.js' 2>/dev/null || true); do
+      if [ "$(readlink "/proc/$p/cwd" 2>/dev/null || true)" = "$ROOT" ]; then pids="$pids $p"; fi
+    done
+    for p in $pids; do
+      case "$p" in ''|*[!0-9]*) continue ;; esac
+      [ "$p" = "$$" ] && continue
+      kill -TERM "$p" 2>/dev/null || true
+    done
     pkill -TERM -f "$ROOT/src/main.js" 2>/dev/null || true
+
+    for _ in $(seq 1 20); do
+      alive=0
+      for p in $pids; do
+        case "$p" in ''|*[!0-9]*) continue ;; esac
+        kill -0 "$p" 2>/dev/null && alive=1
+      done
+      [ "$alive" = 0 ] && break
+      sleep 0.25
+    done
+    for p in $pids; do
+      case "$p" in ''|*[!0-9]*) continue ;; esac
+      kill -KILL "$p" 2>/dev/null || true
+    done
+
+    rm -f data/node.pid data/bot.lock
     echo '🛑 Bot parado.'
     ;;
 
@@ -81,6 +110,10 @@ case "$cmd" in
     node src/pair.js "${2:-}"
     ;;
 
+  repair)
+    node scripts/repair-sessions.mjs "${2:-}"
+    ;;
+
   doctor)
     node scripts/doctor.mjs
     ;;
@@ -102,7 +135,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "Uso: $0 {start|stop|restart|status|logs|pair|doctor|test|connection-smoke|backup|boot-install}"
+    echo "Uso: $0 {start|stop|restart|status|logs|pair|repair|doctor|test|connection-smoke|backup|boot-install}"
     exit 1
     ;;
 esac

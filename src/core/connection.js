@@ -3,6 +3,7 @@ import makeWASocket, {
   fetchLatestWaWebVersion,
   Browsers,
   DisconnectReason,
+  makeCacheableSignalKeyStore,
   useMultiFileAuthState
 } from '@whiskeysockets/baileys';
 
@@ -42,9 +43,11 @@ let stopping = false;
 let pairTimer = null;
 let reconnectTimer = null;
 let healthTimer = null;
+let stableTimer = null;
 
 const state = {
   reconnects: 0,
+  conflicts: 0,
   lastOpen: 0,
   lastUpsert: 0,
   lastEvent: Date.now(),
@@ -56,6 +59,8 @@ const state = {
 };
 
 const incomingQueues = new SerialQueues();
+// Comandos têm fila própria: não esperam arquivamento/captura de mídia do mesmo chat.
+const commandQueues = new SerialQueues();
 const COMMAND_MAX_AGE_MS = 2 * 60_000;
 
 const VERSION_CACHE_FILE = path.join(CONFIG.DATA_DIR, 'wa-web-version.json');
@@ -272,6 +277,49 @@ function scheduleReconnect(delay, reason) {
 
 function clearRecoveryTimers() {
   if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+  if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
+}
+
+/**
+ * Auto-cura de sessão Signal corrompida ("Bad MAC" / "No matching sessions").
+ * Se o MESMO contato falha 2x em 15 min, apaga só a sessão dele: o WhatsApp
+ * pede retransmissão e a sessão é recriada na hora (as demais não são tocadas).
+ */
+const decryptFailures = new Map();
+const DECRYPT_HEAL_THRESHOLD = 2;
+const DECRYPT_WINDOW_MS = 15 * 60_000;
+const DECRYPT_COOLDOWN_MS = 10 * 60_000;
+
+async function onDecryptFailure({ key, error }) {
+  const sock = socket;
+  if (!sock || !key || stopping) return;
+  if (!/bad mac|no matching sessions|no session found|invalid prekey|over 2000 messages/i.test(error || '')) return;
+
+  const jid = key.participant || key.remoteJid;
+  if (!jid || jid === 'status@broadcast' || String(jid).endsWith('@g.us')) return;
+
+  let addr;
+  try { addr = sock.signalRepository?.jidToSignalProtocolAddress?.(jid); } catch { addr = null; }
+  if (!addr) return;
+
+  const now = Date.now();
+  const rec = decryptFailures.get(addr) || { count: 0, first: now, healedAt: 0 };
+  if (now - rec.first > DECRYPT_WINDOW_MS) { rec.count = 0; rec.first = now; }
+  rec.count += 1;
+  decryptFailures.set(addr, rec);
+
+  if (rec.count < DECRYPT_HEAL_THRESHOLD || now - rec.healedAt < DECRYPT_COOLDOWN_MS) return;
+
+  rec.healedAt = now;
+  rec.count = 0;
+  try {
+    await sock.authState.keys.set({ session: { [addr]: null } });
+    logger.warn({ addr }, 'sessão Signal corrompida removida (será recriada automaticamente)');
+    consoleLog('🩹 Sessão de criptografia corrompida com um contato foi reiniciada automaticamente.');
+    saveEvent({ kind: 'session.healed', data: { addr } });
+  } catch (error_) {
+    logger.warn({ err: error_?.message }, 'não foi possível reiniciar a sessão Signal');
+  }
 }
 
 function markEvent() {
@@ -307,6 +355,7 @@ function forceSocketRecovery(reason) {
   setTimeout(() => {
     if (stopping || socket !== current) return;
     socket = null;
+    try { current.end?.(new Error(`recovery-timeout:${reason}`)); } catch {}
     scheduleReconnect(1_500, reason);
   }, 5_000).unref?.();
 }
@@ -345,6 +394,13 @@ export async function connect() {
     await fs.mkdir(CONFIG.AUTH_DIR, { recursive: true });
     await fs.chmod(CONFIG.AUTH_DIR, 0o700).catch(() => {});
 
+    // Nunca deixa dois sockets vivos no mesmo processo (um derrubaria o outro: conflict/replaced).
+    if (socket) {
+      const old = socket;
+      socket = null;
+      try { old.end?.(new Error('replaced-by-new-socket')); } catch {}
+    }
+
     const { state: auth, saveCreds } = await useMultiFileAuthState(CONFIG.AUTH_DIR);
 
     const version = [2, 3000, 1043857760];
@@ -361,13 +417,14 @@ export async function connect() {
     state.lastEvent = Date.now();
     state.lastOpen = 0;
 
-    socket = makeWASocket({
+    const sock = makeWASocket({
       version,
       auth: {
         creds: auth.creds,
-        keys: auth.keys
+        // Cache em memória das chaves Signal: evita ler dezenas de arquivos a cada mensagem (envio/recebimento bem mais rápido).
+        keys: makeCacheableSignalKeyStore(auth.keys, logger.child({ component: 'signal-store' }, { level: 'warn' }))
       },
-      logger: createBaileysLogger(),
+      logger: createBaileysLogger(undefined, onDecryptFailure),
       browser: Browsers.macOS('Chrome'),
       printQRInTerminal: false,
       markOnlineOnConnect: CONFIG.MARK_ONLINE,
@@ -382,17 +439,32 @@ export async function connect() {
       shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false
     });
+    socket = sock;
 
-    socket.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', saveCreds);
 
-    socket.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', async (update) => {
+      // Evento de um socket antigo (já substituído): ignora, senão derruba o socket novo.
+      if (socket !== sock && !stopping) {
+        if (update.connection === 'close') logger.debug('socket antigo encerrado (ignorado)');
+        return;
+      }
+
       const { connection, lastDisconnect } = update;
       markEvent();
 
       if (connection === 'open') {
         state.lastOpen = Date.now();
-        state.reconnects = 0;
-              startHealthProbe(socket);
+        startHealthProbe(sock);
+
+        // Só considera a conexão "saudável" depois de 30 s de pé: evita backoff zerado em loop de conflito.
+        if (stableTimer) clearTimeout(stableTimer);
+        stableTimer = setTimeout(() => {
+          stableTimer = null;
+          state.reconnects = 0;
+          state.conflicts = 0;
+        }, 30_000);
+        stableTimer.unref?.();
 
         consoleLog('✅ WhatsApp conectado — BOT-ZAP SUPREMO ONLINE');
 
@@ -413,6 +485,7 @@ export async function connect() {
 
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
+        const replaced = code === DisconnectReason.connectionReplaced;
         const fatal =
           code === DisconnectReason.loggedOut ||
           code === DisconnectReason.badSession;
@@ -421,6 +494,7 @@ export async function connect() {
           {
             code,
             fatal,
+            replaced,
             waVersion: state.waVersion,
             waVersionSource: state.waVersionSource
           },
@@ -452,13 +526,26 @@ export async function connect() {
 
         if (!stopping && !fatal) {
           state.reconnects += 1;
+          let delay;
 
-          const delay = code === 405 || code === DisconnectReason.restartRequired
-            ? 1_500
-            : Math.min(
-                60_000,
-                Math.max(2_500, Math.pow(2, Math.min(state.reconnects, 5)) * 1_000)
-              );
+          if (replaced) {
+            // "conflict/replaced": OUTRA cópia está usando esta sessão. Reconectar rápido só inicia
+            // uma briga (as duas se derrubam e as chaves se corrompem), então espera cada vez mais.
+            state.conflicts += 1;
+            delay = Math.min(300_000, 15_000 * 2 ** Math.min(state.conflicts - 1, 5));
+            consoleLog(
+              '\n⚠️ O WhatsApp informou que OUTRA cópia do bot (ou outro programa) está usando esta mesma sessão.\n' +
+                '   Pare a outra cópia:  ./bot.sh stop   (e só depois ./bot.sh start)\n' +
+                `   Nova tentativa em ${Math.round(delay / 1000)}s.\n`
+            );
+          } else if (code === 405 || code === DisconnectReason.restartRequired) {
+            delay = 1_500;
+          } else {
+            delay = Math.min(
+              30_000,
+              Math.max(1_500, Math.pow(2, Math.min(state.reconnects, 5)) * 1_000)
+            );
+          }
 
           scheduleReconnect(delay, `disconnect:${code ?? 'unknown'}`);
         }
@@ -471,7 +558,8 @@ export async function connect() {
       }
     });
 
-    socket.ev.on('messages.upsert', async (event) => {
+    sock.ev.on('messages.upsert', async (event) => {
+      if (socket !== sock) return;
       markEvent();
       if (event?.requestId) {
         logger.warn('upsert com requestId ignorado por segurança');
@@ -486,8 +574,18 @@ export async function connect() {
 
         const jid = msg?.key?.remoteJid || '__unknown__';
 
+        // 1) Comandos/figurinhas saem NA HORA, em fila própria (antes ficavam atrás do arquivamento).
+        if (msg?.key?.fromMe && msg?.message) {
+          commandQueues
+            .run(jid, () => handleCommandPhase(sock, msg))
+            .catch((error) => {
+              logger.warn({ err: error?.message }, 'command phase failed');
+            });
+        }
+
+        // 2) Arquivamento e monitores seguem em paralelo.
         incomingQueues
-          .run(jid, () => handleIncoming(msg))
+          .run(jid, () => handleIncoming(sock, msg))
           .catch((error) => {
             logger.warn(
               { err: error?.message },
@@ -497,12 +595,12 @@ export async function connect() {
       }
     });
 
-    socket.ev.on('messages.update', async (updates) => {
+    sock.ev.on('messages.update', async (updates) => {
       markEvent();
       for (const item of updates || []) {
         try {
           await handleMessageUpdate(
-            socket,
+            sock,
             item.key,
             item.update,
             CONFIG
@@ -516,40 +614,40 @@ export async function connect() {
       }
     });
 
-    socket.ev.on('messages.reaction', async (updates) => {
+    sock.ev.on('messages.reaction', async (updates) => {
       markEvent();
       for (const item of [].concat(updates || [])) {
         try {
-          await onReaction(socket, item);
+          await onReaction(sock, item);
         } catch {
           // Monitor is non-critical.
         }
       }
     });
 
-    socket.ev.on('presence.update', (event) => {
+    sock.ev.on('presence.update', (event) => {
       markEvent();
-      onPresence(socket, event).catch(() => {});
+      onPresence(sock, event).catch(() => {});
     });
 
-    socket.ev.on('message-receipt.update', (event) => {
+    sock.ev.on('message-receipt.update', (event) => {
       markEvent();
-      onReceipt(socket, event).catch(() => {});
+      onReceipt(sock, event).catch(() => {});
     });
 
-    socket.ev.on('call', (event) => {
+    sock.ev.on('call', (event) => {
       markEvent();
-      onCall(socket, event).catch(() => {});
+      onCall(sock, event).catch(() => {});
     });
 
-    socket.ev.on('group-participants.update', (event) => {
+    sock.ev.on('group-participants.update', (event) => {
       markEvent();
-      handleGroupEvent(socket, event).catch(() => {});
+      handleGroupEvent(sock, event).catch(() => {});
     });
 
-    await maybePair(socket, auth);
+    await maybePair(sock, auth);
 
-    return socket;
+    return sock;
   })().finally(() => {
     connectPromise = null;
   });
@@ -557,7 +655,21 @@ export async function connect() {
   return connectPromise;
 }
 
-async function handleIncoming(msg) {
+// Comandos (.s, .menu ...) e auto-figurinha: só mensagens da própria conta e recentes.
+async function handleCommandPhase(sock, msg) {
+  if (!msg?.key?.remoteJid || !msg?.key?.id || msg.key.remoteJid === 'status@broadcast') return;
+
+  // Mensagens entregues em lote depois de uma queda/reconexão não reexecutam comandos.
+  if (Date.now() - tsMs(msg.messageTimestamp) >= COMMAND_MAX_AGE_MS) return;
+
+  const handled = await handleCommand(sock, msg);
+
+  if (!handled) {
+    await maybeAutoSticker(sock, msg).catch(() => {});
+  }
+}
+
+async function handleIncoming(sock, msg) {
   state.upserts += 1;
   state.lastUpsert = Date.now();
 
@@ -570,49 +682,38 @@ async function handleIncoming(msg) {
 
   if (msg.key.remoteJid === 'status@broadcast') {
     if (isFeatureOn('status')) {
-      await handleStatus(socket, msg);
+      await handleStatus(sock, msg);
     }
 
     return;
   }
 
   if (isFeatureOn('viewonce') && !msg.key.fromMe) {
-    const recovered = await captureViewOnce(socket, msg).catch(() => false);
+    const recovered = await captureViewOnce(sock, msg).catch(() => false);
 
     if (recovered === false) {
-      scheduleViewOnceRetry(socket, msg);
+      scheduleViewOnceRetry(sock, msg);
     }
   }
 
   if (isFeatureOn('media') && !msg.key.fromMe) {
-    await archiveMedia(socket, msg, { kind: 'media' }).catch(() => {});
+    await archiveMedia(sock, msg, { kind: 'media' }).catch(() => {});
   }
 
   if (isFeatureOn('forward')) {
-    await onForward(socket, msg).catch(() => {});
+    await onForward(sock, msg).catch(() => {});
   }
 
   if (isFeatureOn('device')) {
-    await onDevice(socket, msg).catch(() => {});
+    await onDevice(sock, msg).catch(() => {});
   }
 
   if (isFeatureOn('smart')) {
-    maybeSmartAlert(socket, msg);
+    maybeSmartAlert(sock, msg);
   }
 
   if (msg.message?.reactionMessage) {
-    await onReaction(socket, msg);
-  }
-
-  // Comandos antigos (mensagens entregues em lote depois de uma queda/reconexão) não são reexecutados.
-  const fresh = Date.now() - tsMs(msg.messageTimestamp) < COMMAND_MAX_AGE_MS;
-
-  if (fresh) {
-    const handled = await handleCommand(socket, msg);
-
-    if (!handled) {
-      await maybeAutoSticker(socket, msg).catch(() => {});
-    }
+    await onReaction(sock, msg);
   }
 
   saveEvent({
