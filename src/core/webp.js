@@ -206,6 +206,35 @@ export function tagSticker(webp, meta) {
 }
 
 /**
+ * Caixa opaca (alpha > 8) de um buffer RGBA. Amostra a cada `stride` px (1 = exato).
+ * @returns {{x:number,y:number,w:number,h:number}|null} null se tudo transparente
+ */
+export function opaqueBbox(rgba, w, h, stride = 1) {
+  const s = Math.max(1, stride | 0);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y += s) {
+    const row = y * w * 4;
+    for (let x = 0; x < w; x += s) {
+      if (rgba[row + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/** Une duas caixas opacas (null é ignorado). */
+export function unionBbox(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+/**
  * Base de tempo (ms) para reproduzir durações variáveis com fps constante:
  * usa a mediana das durações limitada a 5–30 fps; cada frame repete ≈ dur/tick vezes.
  */

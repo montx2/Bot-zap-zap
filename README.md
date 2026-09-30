@@ -84,7 +84,7 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 .events
 .save                # guardar a mensagem citada no cofre
 .black save|list|get ID
-.s                   # figurinha (responde ou legenda) — sempre preenche o quadrado
+.s                   # figurinha (responde ou legenda) — SEMPRE preenche o quadradinho
 .gif | .mp4 | .ptt | .mp3   # responder mídia
 .toimg | .take | .stickerinfo   # veja a seção Figurinhas
 .hash
@@ -111,8 +111,10 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 Liberado por padrão. Responda uma mídia com `.s` — ou envie a imagem/vídeo/GIF já com `.s` na legenda. Aceita imagem, vídeo, GIF, figurinha (estática ou animada) e documento de imagem/vídeo.
 
-**A figurinha sempre sai preenchendo o quadradinho inteiro** — sem bordas vazias. Quer a imagem
-inteira com espacinho transparente? Escreva `.s inteira`.
+**A figurinha sempre sai preenchendo o quadradinho inteiro** — sem bordas vazias. Vale para
+foto, vídeo, GIF, documento e figurinha: basta `.s` puro. Se a figurinha de entrada tiver faixa
+transparente sobrando, o bot mede e corta o excesso antes de escalar. Quer a imagem inteira com
+espacinho transparente? Escreva `.s inteira`.
 
 ```text
 .s                     # padrão: quadrado 100% preenchido (corta o que sobra)
@@ -139,7 +141,7 @@ Os comandos em inglês (`crop`, `full`, `circle`, `round`, `bw`, `sepia`, `inver
 
 O que o motor faz por você:
 
-- **Figurinha completa**: por padrão a imagem é cortada até preencher os 512×512 — nunca sobra borda vazia.
+- **Figurinha completa**: por padrão a imagem é cortada até preencher os 512×512 — nunca sobra borda vazia. Figurinhas que já vêm com faixa transparente são medidas (caixa opaca) e recortadas; figurinha que já preenche vai por atalho instantâneo (só troca o pack, sem re-encode).
 - **Compressão adaptativa**: se a figurinha passa de 100 KB (estática) ou 500 KB (animada), o bot baixa qualidade/FPS/duração automaticamente até caber.
 - **Pack e autor de verdade**: gravados no EXIF do WebP (em JavaScript puro, sem `webpmux`).
 - **Figurinha animada → qualquer coisa**: o FFmpeg 7.0 não lê WebP animado, então o bot decodifica e compõe os frames sozinho.

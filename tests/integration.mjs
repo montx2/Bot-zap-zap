@@ -23,6 +23,7 @@ const owner='5511999999999@s.whatsapp.net';
 const sent=[];
 const sock={user:{id:owner},sendMessage:async(jid,content)=>{sent.push({jid,content});return {key:{id:`out-${sent.length}`}}},updateMediaMessage:async(msg)=>msg,requestPlaceholderResend:async()=>true,sendPresenceUpdate:async()=>true,waitForSocketOpen:async()=>true};
 const pngPath=path.join(root,'data','fixture.png'); spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=white:s=32x32','-frames:v','1','-y',pngPath]); const png=fs.readFileSync(pngPath); assert.ok(png.length>100,'fixture PNG inválido');
+function runFfmpegOut(args){ const r=spawnSync('ffmpeg',['-hide_banner','-loglevel','error',...args],{stdio:'ignore'}); if(r.status!==0) throw new Error('fixture falhou: '+args.join(' ')); return fs.readFileSync(args[args.length-1]); }
 
 function baseMsg(id,message,fromMe=false,jid='5511988888888@s.whatsapp.net'){return {key:{remoteJid:jid,id,fromMe},message,messageTimestamp:Math.floor(Date.now()/1000),pushName:'Teste'};}
 function vo(type,version='viewOnceMessage'){
@@ -118,6 +119,43 @@ const lastSticker=()=>sent.filter(x=>x.content?.sticker).at(-1).content;
   for(const trecho of ['COMO CRIAR','preenchendo o quadradinho inteiro','MUDAR O FORMATO','EFEITOS','VÍDEO E GIF','SEU NOME NA FIGURINHA','OUTRAS FERRAMENTAS','.s inteira','.s circulo','.s leve','.take','.sticker auto on'])
     assert.ok(help.includes(trecho),`guia sem "${trecho}"`);
   assert.ok(!help.includes('EXIF')&&!help.includes('hq / lq'),'guia ainda tem jargão');
+}
+
+// ── default .s puro preenche o quadrado em TODO tipo de mídia ──
+{
+  // mídia NÃO quadrada e opaca: o canto tem de sair opaco (sem borda vazia)
+  const opaque = await runFfmpegOut(['-f','lavfi','-i','color=c=red:s=320x120','-frames:v','1','-y',path.join(root,'data','wide.png')]);
+  const corner=(webp)=>{ const p=path.join(root,'data','c.png');
+    spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-f','webp_pipe','-i','pipe:0','-frames:v','1','-y',p],{input:webp,stdio:['pipe','ignore','ignore']});
+    return [...spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-i',p,'-vf','crop=1:1:0:0,format=rgba','-frames:v','1','-f','rawvideo','pipe:1'],{encoding:'buffer'}).stdout.slice(0,4)]; };
+  for(const [nome,src,buf] of [
+    ['imagem', {kind:'image',mime:'image/png'}, opaque],
+    ['documento', {kind:'image',mime:'image/png'}, opaque],
+  ]){
+    const r=await ST.buildSticker(buf,src,{opts:ST.defaultOptions(),pack:'P',author:'A',emojis:[]});
+    const info=W.parseWebp(r.webp);
+    assert.equal(info.width,512,`${nome}: largura`); assert.equal(info.height,512,`${nome}: altura`);
+    assert.equal(corner(r.webp)[3],255,`${nome}: .s puro deixou borda vazia`);
+  }
+  // figurinha antiga com faixa transparente → .s puro conserta
+  const pad=path.join(root,'data','padded.webp');
+  spawnSync('ffmpeg',['-hide_banner','-loglevel','error','-i',path.join(root,'data','wide.png'),'-vf',
+    'scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000',
+    '-c:v','libwebp','-q:v','80','-frames:v','1','-y',pad]);
+  const padded=fs.readFileSync(pad);
+  assert.ok(W.parseWebp(padded).hasAlpha,'fixture padded deveria ter alpha');
+  assert.equal(corner(padded)[3],0,'fixture padded deveria ter borda transparente');
+  const fixed=await ST.buildSticker(padded,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('').opts,pack:'P',author:'A',emojis:[]});
+  assert.equal(fixed.retagged,false,'figurininha com faixa não pode ir pelo atalho instantâneo');
+  assert.equal(corner(fixed.webp)[3],255,'.s puro deveria preencher a figurinha com faixa');
+  // ...mas quem pede "inteira" de propósito continua com a borda
+  const keep=await ST.buildSticker(padded,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('inteira').opts,pack:'P',author:'A',emojis:[]});
+  assert.equal(corner(keep.webp)[3],0,'.s inteira deveria respeitar a borda transparente');
+  // figurinha que já preenche → atalho instantâneo (sem re-encode)
+  const solid=await ST.buildSticker(png,{kind:'image',mime:'image/png'},{opts:ST.defaultOptions(),pack:'P',author:'A',emojis:[]});
+  const again=await ST.buildSticker(solid.webp,{kind:'sticker',mime:'image/webp'},{opts:ST.parseStickerArgs('').opts,pack:'P',author:'A',emojis:[]});
+  assert.equal(again.retagged,true,'figurininha já completa deveria ser só retagueada');
+  assert.equal(again.attempts,0,'atalho instantâneo não deveria codificar');
 }
 
 // imagem → figurinha estática com EXIF

@@ -2,7 +2,8 @@
 //
 // - Imagem, vídeo, GIF, figurinha (estática/animada) e documento de imagem/vídeo.
 // - Modos: crop (padrão — preenche o quadrado inteiro), fit (inteira), full (estica),
-//   circle, round.
+//   circle, round.  Com qualquer um que ocupe o quadrado, uma figurinha de entrada que
+//   tenha faixa transparente sobrando é medida e recortada antes de escalar.
 // - Efeitos: bw, sepia, invert, flip, blur.  Vídeo: fast, slow, rev, boomerang, duração.
 // - Compressão adaptativa: tenta qualidades/FPS menores até caber no limite do WhatsApp.
 // - Nome do pacote/autor/emojis gravados no EXIF do WebP (aparece no WhatsApp).
@@ -19,8 +20,8 @@ import { logger } from '../core/logger.js';
 import { extractText, getQuoted, getMediaNode, formatBytes, isSelfChat, card } from '../core/format.js';
 import { extFromMime, ffmpegCapabilities, probeMedia, runFfmpeg, withTempDir } from '../core/media.js';
 import { SerialQueues } from '../core/queue.js';
-import { isAnimatedWebp, parseWebp, packId, readStickerExif, tagSticker } from '../core/webp.js';
-import { decodeAnimatedWebp, webpToPng } from '../core/webpDecode.js';
+import { isAnimatedWebp, parseWebp, packId, readStickerExif, tagSticker, opaqueBbox, unionBbox, composeFrames } from '../core/webp.js';
+import { decodeAnimatedWebp, decodeWebpFrame, webpToPng } from '../core/webpDecode.js';
 
 const SIZE = 512;
 const queue = new SerialQueues();
@@ -180,11 +181,13 @@ const MASKS = {
   round: `format=gbrap,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip(${Math.round(SIZE * 0.16)}-hypot(max(abs(X+0.5-W/2)-(W/2-${Math.round(SIZE * 0.16)}),0),max(abs(Y+0.5-H/2)-(H/2-${Math.round(SIZE * 0.16)}),0))+0.5,0,1)'`
 };
 
-export function buildFilter(opts, { animated, fps = 15 } = {}) {
+export function buildFilter(opts, { animated, fps = 15, trim = null } = {}) {
   const f = [];
   // Em "fast" amostra mais rápido na entrada; em "slow" duplica frames depois do setpts.
   if (animated) f.push(`fps=${fps * Math.max(1, opts.speed)}`);
   f.push('format=rgba');
+  // Recorta o que sobra (banda transparente) ANTES de escalar: a figurinha preenche tudo.
+  if (trim) f.push(`crop=${trim.w}:${trim.h}:${trim.x}:${trim.y}`);
   for (const fx of opts.fx) f.push(FX_FILTERS[fx]);
   f.push('format=rgba');
   if (opts.fit === 'full') f.push(`scale=${SIZE}:${SIZE}:flags=lanczos`);
@@ -223,8 +226,11 @@ export function filterVariants(opts, ctx) {
   return [...new Set(out)];
 }
 
+/** true quando o formato pedido significa "ocupar o quadradinho inteiro". */
+const wantsFill = (o) => FILL_FITS.has(o.fit);
+
 /** Codifica `input` em WebP respeitando o limite de tamanho (adaptativo). */
-async function encode(input, dir, { animated, opts, seconds }) {
+async function encode(input, dir, { animated, opts, seconds, trim = null }) {
   const maxBytes = (animated ? CONFIG.STICKER_MAX_ANIMATED_KB : CONFIG.STICKER_MAX_STATIC_KB) * 1024;
   const hardMax = 1024 * 1024;
   const steps = ladder(animated, opts.quality);
@@ -245,7 +251,7 @@ async function encode(input, dir, { animated, opts, seconds }) {
     if (animated) tail.push('-loop', '0', '-t', String(Math.ceil(seconds * 1.05 + 0.5)));
     else tail.push('-frames:v', '1');
     tail.push('-y', out);
-    const variants = filterVariants(opts, { animated, fps: s.fps });
+    const variants = filterVariants(opts, { animated, fps: s.fps, trim });
     let encoded = false;
     for (const vf of variants) {
       try {
@@ -297,6 +303,49 @@ export function findSource(msg) {
 
 function toLen(v) { try { return typeof v === 'object' && v?.toNumber ? v.toNumber() : Number(v) || 0; } catch { return 0; } }
 
+// ───────── figurinha completa: recorte do que sobra ─────────
+// Só mexe quando sobra banda transparente de verdade; margem fina de design
+// (anti-serrilhado, borda arredondada) é preservada.
+const TRIM_MIN_EDGE = 16;    // caixa menor que isso é degenerada: ignora
+const TRIM_COVER = 0.96;     // já ocupa 96% do quadrado = já preenche
+const FILL_FITS = new Set(['crop', 'full', 'circle', 'round']);   // modos que ocupam o quadrado
+
+/** Recorte útil para preencher, ou null se já preenche. */
+function usableTrim(bb, W = SIZE, H = SIZE) {
+  if (!bb || bb.w < TRIM_MIN_EDGE || bb.h < TRIM_MIN_EDGE) return null;
+  if (bb.w >= W * TRIM_COVER && bb.h >= H * TRIM_COVER) return null;
+  return { x: bb.x, y: bb.y, w: bb.w, h: bb.h };
+}
+
+/** Caixa opaca do 1º quadro de um WebP animado (1 decode, barato). */
+async function firstFrameBbox(buf) {
+  try {
+    for await (const fr of composeFrames(buf, decodeWebpFrame, { maxFrames: 1, prefetch: 0 })) {
+      return opaqueBbox(fr.rgba, fr.width, fr.height, 2);
+    }
+  } catch { /* medição é opcional */ }
+  return null;
+}
+
+/** Caixa opaca de um WebP estático com transparência (1 decode). */
+async function staticBbox(buf) {
+  try {
+    const info = parseWebp(buf);
+    const { stdout } = await runFfmpeg(['-f', 'webp_pipe', '-i', 'pipe:0', '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1'], { stdin: buf, stdout: true, timeoutMs: 30_000 });
+    return opaqueBbox(stdout, info.width, info.height, 1);
+  } catch { return null; }
+}
+
+/** A figurinha já ocupa o quadradinho inteiro? (sem FFmpeg quando é opaca) */
+async function stickerFillsSquare(buf) {
+  try {
+    const info = parseWebp(buf);
+    if (info.width !== SIZE || info.height !== SIZE) return false;   // tamanho fora do padrão
+    if (!info.hasAlpha) return true;                                 // opaca: preenche tudo
+    return isAnimatedWebp(buf) ? !usableTrim(await firstFrameBbox(buf)) : !usableTrim(await staticBbox(buf));
+  } catch { return true; }   // na dúvida, trata como completa (caminho instantâneo)
+}
+
 /**
  * Converte um buffer de mídia em figurinha WebP pronta (com EXIF).
  * @param {Buffer} buffer
@@ -308,8 +357,9 @@ export async function buildSticker(buffer, src, cfg) {
   const meta = { pack: cfg.pack, author: cfg.author, emojis: cfg.emojis?.length ? cfg.emojis : ['🔥'] };
   meta.id = packId(meta.pack, meta.author);
 
-  // Figurinha → figurinha sem mudança visual: só troca os metadados (instantâneo e sem perdas).
-  if (src.kind === 'sticker' && !hasVisualChange(opts)) {
+  // Figurinha → figurinha sem mudança visual E já preenchendo o quadrado:
+  // só troca os metadados (instantâneo e sem perdas).
+  if (src.kind === 'sticker' && !hasVisualChange(opts) && await stickerFillsSquare(buffer)) {
     const webp = tagSticker(buffer, meta);
     return { webp, animated: isAnimatedWebp(buffer), bytes: webp.length, attempts: 0, oversize: false, retagged: true };
   }
@@ -322,16 +372,23 @@ export async function buildSticker(buffer, src, cfg) {
     let input = path.join(dir, `in.${extFromMime(src.mime, src.kind === 'image' ? 'jpg' : 'mp4')}`);
     let animated = src.kind === 'video';
     const seconds = opts.seconds || CONFIG.STICKER_MAX_SECONDS;
+    // Modo "ocupar o quadrado": recorta a banda transparente que sobrar antes de escalar.
+    let trim = null;
 
     if (src.kind === 'sticker') {
       animated = isAnimatedWebp(buffer);
       if (animated) {
         // FFmpeg não lê WebP animado → converte para um vídeo intermediário sem perdas.
         input = path.join(dir, 'in.mkv');
-        await decodeAnimatedWebp(buffer, { outFile: input, outArgs: ['-c:v', 'png'], maxSeconds: CONFIG.STICKER_MAX_SECONDS_LIMIT });
+        const dec = await decodeAnimatedWebp(buffer, {
+          outFile: input, outArgs: ['-c:v', 'png'], maxSeconds: CONFIG.STICKER_MAX_SECONDS_LIMIT,
+          measure: wantsFill(opts)
+        });
+        if (wantsFill(opts)) trim = usableTrim(dec.bbox, dec.width, dec.height);
       } else {
         input = path.join(dir, 'in.webp');
         await writeFile(input, buffer);
+        if (wantsFill(opts)) trim = usableTrim(await staticBbox(buffer));
       }
     } else {
       await writeFile(input, buffer);
@@ -342,7 +399,7 @@ export async function buildSticker(buffer, src, cfg) {
       const probe = await probeMedia(input);
       if (!probe.hasVideo) throw new Error('não encontrei vídeo nesse arquivo');
     }
-    const enc = await encode(input, dir, { animated, opts, seconds });
+    const enc = await encode(input, dir, { animated, opts, seconds, trim });
     const webp = tagSticker(enc.webp, meta);
     return { webp, animated, bytes: webp.length, attempts: enc.attempts, oversize: enc.oversize, retagged: false };
   }, 'sticker');
