@@ -6,7 +6,7 @@ import { ownerJid } from './identity.js';
 import { extractText, getQuoted, formatDate, formatBytes, truncate, isGroupJid, card } from './format.js';
 import * as DB from './db.js';
 import { viewOnceEnabled,setViewOnceEnabled,captureQuotedViewOnce,viewOncePanel,listCaptures,sendCapture } from '../modules/viewonce.js';
-import { stickerEnabled,setStickerEnabled,stickerHelp,createSticker,takeSticker,stickerToImage,stickerInfo,setStickerAuto,stickerAutoEnabled,getPack,setPack,resetPack } from '../modules/stickers.js';
+import { stickerEnabled,setStickerEnabled,stickerHelp,createSticker,takeSticker,stickerToImage,stickerInfo,setStickerAuto,stickerAutoEnabled,getPack,setPack,resetPack,findSource } from '../modules/stickers.js';
 import { saveQuotedToVault,vaultList } from '../modules/vault.js';
 import { convertQuoted } from '../modules/commandMedia.js';
 import { addTarget,removeTarget,allWatched,normalizeWatchTarget } from '../modules/watch.js';
@@ -20,7 +20,7 @@ import { openSecureFile } from './security.js';
 import { ffmpegCapabilities } from './media.js';
 import { runMaintenance } from './maintenance.js';
 
-const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n🎨 *Figurinhas* (.menu figurinha)\n.s → imagem, vídeo, GIF ou figurinha (responda ou legenda)\n.s circle | crop | full | round\n.s bw | sepia | invert | flip | blur\n.s slow | fast | rev | boomerang | 6 (segundos)\n.s 😎 | Pack | Autor\n.take Pack | Autor → troca pack da figurinha\n.toimg • .togif • .tovideo • .stickerinfo\n.sticker pack Nome | Autor\n.sticker auto on|off\n\n🎞️ *Conversores*\n.gif • .mp4 • .ptt • .mp3 • .hash → respondendo mídia\n\n👁️ *Visualização única*\n.vo → painel\n.vo on|off\n.vo list • .vo get ID\n.o ou .wow → recupera a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo [limite]\n.media • .links • .events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save|list|get ID\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número • .network • .patterns • .stalk número\n\n👥 *Grupos*\n.groupinfo • .admins • .tagall [texto]\n\n🛠️ *Utilidades*\n.poll pergunta | opção | opção\n.cleanlink URL\n\n📊 *Sistema*\n.stats • .health • .status • .ping • .id • .check número\n.feature [nome on|off]\n.doctor • .backup • .clean\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.\n\n${CONFIG.BRAND}`;
+const HELP=`🔥 *BOT-ZAP SUPREMO*\n_Termux • privado • sem IA obrigatória_\n\n🎨 *Figurinhas* (.menu figurinha)\n.s → responda ou legende foto/vídeo/GIF/figurinha (sempre preenche o quadrado)\n.s inteira | preencher | esticar | circulo | borda\n.s pretoebranco | sepia | inverter | espelho | desfoque\n.s rapido | lento | reverso | vaievem | parada | 5 | qualidade | leve\n.s 😎 | Pack | Autor\n.take • .toimg • .togif • .tovideo • .stickerinfo\n.sticker pack Nome | Autor • .sticker auto on|off • .sticker on|off\n\n🎞️ *Conversores*\n.gif • .mp4 • .ptt • .mp3 • .hash → respondendo mídia\n\n👁️ *Visualização única*\n.vo → painel\n.vo on|off\n.vo list • .vo get ID\n.o ou .wow → recupera a mensagem citada\n\n💾 *Arquivo & busca*\n.find termo [limite]\n.media • .links • .events [tipo]\n.export [limite]\n.recover [id]\n.edits → cite a mensagem\n\n🔐 *Cofre*\n.save → salva a citada\n.black save|list|get ID\n\n👀 *Monitoramento*\n.watch add número [nome]\n.watch rm número\n.watch hours número 8 9 10 ...\n.watch list\n.profile número • .network • .patterns • .stalk número\n\n👥 *Grupos*\n.groupinfo • .admins • .tagall [texto]\n\n🛠️ *Utilidades*\n.poll pergunta | opção | opção\n.cleanlink URL\n\n📊 *Sistema*\n.stats • .health • .status • .ping • .id • .check número\n.feature [nome on|off]\n.doctor • .backup • .clean\n\n⚙️ Tudo administrativo exige mensagem enviada pela própria conta.\n\n${CONFIG.BRAND}`;
 
 const send=async(sock,jid,c)=>{if(typeof sock.waitForSocketOpen==='function')await sock.waitForSocketOpen();return sock.sendMessage(jid,c);};
 
@@ -44,6 +44,8 @@ export async function handleCommand(sock,msg){if(!msg?.key?.fromMe)return false;
   case 'o':case'wow':case'reveal':case'0':{const ok=await captureQuotedViewOnce(sock,msg);if(!ok)await send(sock,jid,{text:card('👁️ *FALHA AO RECUPERAR*',['Responda a mensagem de visualização única com `.o`.','Se já abriu no celular, o WhatsApp pode não entregar mais a mídia.'])});break;}
   case 'sticker':case'sticke':case's':case'fig':case'figurinha':case'stk':{
     const a=(args[0]||'').toLowerCase();
+    // `.sticker` sozinho (sem mídia) abre o guia simples em vez de dar erro.
+    if(!a && !findSource(msg)){await send(sock,jid,{text:stickerHelp(sock)});break;}
     if(a==='on'){setStickerEnabled(true);await send(sock,jid,{text:'🎨 Stickers: ✅ LIBERADOS'});}
     else if(a==='off'){setStickerEnabled(false);await send(sock,jid,{text:'🎨 Stickers: 🔒 BLOQUEADOS'});}
     else if(['status','help','ajuda','menu','opcoes','opções'].includes(a)){await send(sock,jid,{text:stickerHelp(sock)});}

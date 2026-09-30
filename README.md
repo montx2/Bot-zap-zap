@@ -84,7 +84,7 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 .events
 .save                # guardar a mensagem citada no cofre
 .black save|list|get ID
-.s                   # figurinha de imagem/vídeo/GIF/figurinha (responda ou use como legenda)
+.s                   # figurinha (responde ou legenda) — SEMPRE preenche o quadradinho
 .gif | .mp4 | .ptt | .mp3   # responder mídia
 .toimg | .take | .stickerinfo   # veja a seção Figurinhas
 .hash
@@ -111,34 +111,45 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 Liberado por padrão. Responda uma mídia com `.s` — ou envie a imagem/vídeo/GIF já com `.s` na legenda. Aceita imagem, vídeo, GIF, figurinha (estática ou animada) e documento de imagem/vídeo.
 
+**A figurinha sempre sai preenchendo o quadradinho inteiro** — sem bordas vazias. Vale para
+foto, vídeo, GIF, documento e figurinha: basta `.s` puro. Se a figurinha de entrada tiver faixa
+transparente sobrando, o bot mede e corta o excesso antes de escalar. Quer a imagem inteira com
+espacinho transparente? Escreva `.s inteira`.
+
 ```text
-.s                     # padrão: imagem inteira com fundo transparente
-.s crop                # preenche o quadrado cortando as bordas
-.s full                # estica para 512×512
-.s circle | .s round   # recorte circular / cantos arredondados (borda suave)
-.s bw | sepia | invert | flip | blur        # efeitos (combináveis)
-.s slow | fast | rev | boomerang            # vídeo/GIF
-.s 6                   # duração máxima em segundos (1–15)
-.s static              # só o primeiro frame do vídeo
-.s hq | lq             # qualidade maior / arquivo menor
-.s crop 😎 | Meu Pack | Meu Nome            # emoji + pack + autor desta figurinha
+.s                     # padrão: quadrado 100% preenchido (corta o que sobra)
+.s inteira             # imagem inteira, com borda transparente
+.s esticar             # estica para 512×512
+.s circulo | .s borda  # redonda / cantos arredondados (borda suave)
+.s pretoebranco | sepia | inverter | espelho | desfoque   # efeitos (combináveis)
+.s rapido | lento | reverso | vaievem | parada            # vídeo/GIF
+.s 5                   # só os 5 primeiros segundos (1–15)
+.s qualidade | leve    # mais nítida / arquivo menor
+.s 😎 | Meu Pack | Meu Nome            # emoji + pack + autor desta figurinha
 
 .sticker pack Nome | Autor    # pack/autor padrão (reset: .sticker pack reset)
 .sticker auto on|off          # tudo que você mandar pro seu próprio chat vira figurinha
-.take Pack | Autor            # responda uma figurinha: troca o pack/autor
+.take Nome | Autor            # responda uma figurinha: troca o pack/autor
 .toimg [doc]                  # figurinha → imagem (doc mantém transparência)
 .togif | .tovideo             # figurinha animada → GIF / vídeo
 .stickerinfo                  # pack, autor, emojis, frames, tamanho
-.menu figurinha               # ajuda completa
+.menu figurinha               # guia simples, explica cada opção
 ```
+
+Os comandos em inglês (`crop`, `full`, `circle`, `round`, `bw`, `sepia`, `invert`, `flip`,
+`blur`, `fast`, `slow`, `rev`, `boomerang`, `static`, `hq`, `lq`) continuam funcionando.
 
 O que o motor faz por você:
 
+- **Figurinha completa**: por padrão a imagem é cortada até preencher os 512×512 — nunca sobra borda vazia. Figurinhas que já vêm com faixa transparente são medidas (caixa opaca) e recortadas; figurinha que já preenche vai por atalho instantâneo (só troca o pack, sem re-encode).
 - **Compressão adaptativa**: se a figurinha passa de 100 KB (estática) ou 500 KB (animada), o bot baixa qualidade/FPS/duração automaticamente até caber.
 - **Pack e autor de verdade**: gravados no EXIF do WebP (em JavaScript puro, sem `webpmux`).
 - **Figurinha animada → qualquer coisa**: o FFmpeg 7.0 não lê WebP animado, então o bot decodifica e compõe os frames sozinho.
+- **Filtros com plano B**: se o seu FFmpeg não tiver algum filtro (`geq`, `gblur`...), o bot reencoded com uma versão mais simples em vez de falhar.
 - Reações ⏳ → (some) / ❌ na mensagem do comando, fila de uma conversão por vez (poupa o celular) e limpeza automática de temporários.
 - Pack padrão: **by 𝖒𝖔𝖓𝖙𝖝2_** (sem autor, visual limpo). Ajustes por `.env`: `BOT_BRAND`, `STICKER_PACK`, `STICKER_AUTHOR`, `STICKER_MAX_SECONDS`, `STICKER_MAX_STATIC_KB`, `STICKER_MAX_ANIMATED_KB`, `STICKER_REACT`, `STICKER_AUTO_SELF`.
+
+O formato padrão pode ser trocado no `.env` com `STICKER_FIT` (`crop`, `fit`, `full`, `circle` ou `round`).
 
 > Quem tinha figurinhas bloqueadas (`.sticker off`) no motor antigo passa a ter o recurso liberado uma única vez na atualização; use `.sticker off` de novo se quiser bloquear.
 

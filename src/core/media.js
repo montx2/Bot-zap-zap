@@ -135,8 +135,8 @@ export async function convertMedia(input, output, mode, { maxSeconds = CONFIG.ST
     mp4: () => ['-i', input, '-t', '180', '-vf', `${GIF_SCALE},format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', '-map_metadata', '-1', '-y', output],
     png: () => ['-i', input, '-frames:v', '1', '-y', output],
     // Modos antigos (mantidos por compatibilidade; o motor novo fica em modules/stickers.js).
-    sticker: () => ['-i', input, '-vf', 'scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000', '-c:v', 'libwebp', '-lossless', '0', '-q:v', '75', '-frames:v', '1', '-y', output],
-    stickerVideo: () => ['-i', input, '-t', String(maxSeconds), '-vf', 'fps=12,scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000', '-an', '-c:v', 'libwebp', '-q:v', '55', '-loop', '0', '-y', output]
+    sticker: () => ['-i', input, '-vf', 'scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,format=rgba', '-c:v', 'libwebp', '-lossless', '0', '-q:v', '75', '-frames:v', '1', '-y', output],
+    stickerVideo: () => ['-i', input, '-t', String(maxSeconds), '-vf', 'fps=12,scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,format=rgba', '-an', '-c:v', 'libwebp', '-q:v', '55', '-loop', '0', '-y', output]
   };
   if (!modes[mode]) throw new Error(`modo FFmpeg desconhecido: ${mode}`);
   await runFfmpeg(modes[mode](), { timeoutMs: 120_000 });
