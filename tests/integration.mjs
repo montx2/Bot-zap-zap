@@ -315,7 +315,15 @@ ST.setStickerAuto(false);
   await cmd('.fig'); assert.equal(W.readStickerExif(lastSticker().sticker).pack,'Padrao');
   await cmd('.sticker auto on'); assert.equal(ST.stickerAutoEnabled(),true); await cmd('.sticker auto off');
   await cmd('.menu figurinha'); assert.match(sent.at(-1).content.text,/FIGURINHAS — guia simples/);
-  await cmd('.menu'); assert.match(sent.at(-1).content.text,/Figurinhas/);
+  // menu principal: organizado por "o que você quer fazer", sem jargão e sem linhas gigantes
+  await cmd('.menu'); const menu=sent.at(-1).content.text;
+  assert.match(menu,/Figurinhas/);
+  for(const trecho of ['Como usar','Figurinhas','Ver o que só aparece uma vez','Transformar mídia','Achar e guardar','Monitorar alguém','No grupo','Extras e sistema'])
+    assert.ok(menu.includes(trecho),`menu sem a seção "${trecho}"`);
+  assert.ok(menu.includes('.menu figurinha'),'menu não aponta pro guia de figurinha');
+  const longas=menu.split('\n').filter(l=>l.length>70);
+  assert.equal(longas.length,0,`menu com linha longa demais: ${longas[0]||''}`);
+  assert.ok(!menu.includes('Termux')&&!menu.includes('IA obrigatória'),'menu ainda tem jargão');
   // `.sticker` sozinho (sem mídia) abre o guia em vez de errar
   await handleCommand(sock,baseMsg('menustk',{conversation:'.sticker'},true));
   assert.match(sent.at(-1).content.text,/COMO CRIAR/);

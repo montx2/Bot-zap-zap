@@ -17,7 +17,7 @@ import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { dbGet, dbSet } from '../core/db.js';
 import { CONFIG } from '../core/config.js';
 import { logger } from '../core/logger.js';
-import { extractText, getQuoted, getMediaNode, formatBytes, isSelfChat, card } from '../core/format.js';
+import { extractText, getQuoted, getMediaNode, formatBytes, isSelfChat, card, CARD_LINE } from '../core/format.js';
 import { extFromMime, ffmpegCapabilities, probeMedia, runFfmpeg, withTempDir } from '../core/media.js';
 import { SerialQueues } from '../core/queue.js';
 import { isAnimatedWebp, parseWebp, packId, readStickerExif, tagSticker, opaqueBbox, unionBbox, composeFrames } from '../core/webp.js';
@@ -51,48 +51,51 @@ export function resetPack() { dbSet('sticker.pack', ''); dbSet('sticker.author',
 
 export function stickerHelp(sock) {
   const { pack, author } = getPack(sock);
+  const L = CARD_LINE;
+  const sec = (titulo, linhas) => ['', L, titulo, ...linhas];
   return card('🎨 *FIGURINHAS — guia simples*', [
     `Estado: ${stickerEnabled() ? '✅ liberadas' : '🔒 bloqueadas'} • automático no meu chat: ${stickerAutoEnabled() ? '✅ ligado' : '🔒 desligado'}`,
     `📦 Pack: *${pack || '—'}* • ✍️ Autor: *${author || '—'}*`,
-    '',
-    '*1️⃣ COMO CRIAR*',
-    'Responda uma foto, vídeo, GIF ou figurinha com `.s`',
-    '(ou mande a mídia com `.s` escrito na legenda).',
-    'A figurinha sempre mostra a *imagem inteira* — nada de cortar rosto, bicho ou objeto.',
-    '',
-    '*2️⃣ MUDAR O FORMATO* (opcional)',
-    '`.s inteira` → mostra a imagem toda, com espacinho transparente em volta (é o padrão)',
-    '`.s preencher` → quadrado cheio, cortando o que sobra',
-    '`.s esticar` → estica a imagem até caber',
-    '`.s circulo` → deixa a figurinha redonda',
-    '`.s borda` → só arredonda os cantos',
-    '',
-    '*3️⃣ EFEITOS* (pode juntar: `.s circulo espelho`)',
-    '`.s pretoebranco` • `.s sepia` • `.s inverter`',
-    '`.s espelho` • `.s desfoque`',
-    '',
-    '*4️⃣ VÍDEO E GIF*',
-    '`.s rapido` / `.s lento` → muda a velocidade',
-    '`.s reverso` → roda de trás pra frente • `.s vaievem` → vai e volta',
-    '`.s parada` → só o primeiro quadro (vira foto)',
-    '`.s 5` → só os 5 primeiros segundos',
-    '`.s qualidade` → mais nítida • `.s leve` → arquivo menor',
-    '',
-    '*5️⃣ SEU NOME NA FIGURINHA*',
-    '`.s 😎 | Meu Pack | Meu Nome` → só nesta figurinha',
-    '`.sticker pack Nome | Autor` → define o padrão de todas',
-    '`.sticker pack reset` → volta ao padrão',
-    '',
-    '*6️⃣ OUTRAS FERRAMENTAS*',
-    '`.take Nome | Autor` → copia uma figurinha trocando o pack',
-    '`.toimg` → figurinha vira imagem (`.toimg doc` = arquivo com transparência)',
-    '`.togif` / `.tovideo` → figurinha animada vira GIF / vídeo',
-    '`.stickerinfo` → mostra pack, autor, tamanho e quadros',
-    '`.sticker auto on` → o que você mandar no seu próprio chat vira figurinha',
-    '`.sticker on` / `.sticker off` → liga / desliga'
+    ...sec('*1️⃣ COMO CRIAR*', [
+      'Responda uma foto, vídeo, GIF ou figurinha com `.s`',
+      '(ou mande a mídia com `.s` escrito na legenda).',
+      'A figurinha mostra a *imagem inteira* —',
+      'não corta rosto, bicho nem objeto.'
+    ]),
+    ...sec('*2️⃣ MUDAR O FORMATO*', [
+      '`.s inteira` → imagem toda, com espacinho em volta (é o padrão)',
+      '`.s preencher` → quadrado cheio, cortando o que sobra',
+      '`.s esticar` → estica a imagem até caber',
+      '`.s circulo` → figurinha redonda',
+      '`.s borda` → só arredonda os cantos'
+    ]),
+    ...sec('*3️⃣ EFEITOS*  (pode juntar: `.s circulo espelho`)', [
+      '`.s pretoebranco` • `.s sepia` • `.s inverter`',
+      '`.s espelho` • `.s desfoque`'
+    ]),
+    ...sec('*4️⃣ VÍDEO E GIF*', [
+      '`.s rapido` / `.s lento` → muda a velocidade',
+      '`.s reverso` → roda de trás pra frente',
+      '`.s vaievem` → vai e volta',
+      '`.s parada` → só o primeiro quadro (vira foto)',
+      '`.s 5` → só os 5 primeiros segundos',
+      '`.s qualidade` → mais nítida • `.s leve` → arquivo menor'
+    ]),
+    ...sec('*5️⃣ SEU NOME NA FIGURINHA*', [
+      '`.s 😎 | Meu Pack | Meu Nome` → só nesta figurinha',
+      '`.sticker pack Nome | Autor` → define o padrão de todas',
+      '`.sticker pack reset` → volta ao padrão'
+    ]),
+    ...sec('*6️⃣ OUTRAS FERRAMENTAS*', [
+      '`.take Nome | Autor` → copia figurinha trocando o pack',
+      '`.toimg` → figurinha vira imagem (`.toimg doc` = arquivo)',
+      '`.togif` / `.tovideo` → animada vira GIF / vídeo',
+      '`.stickerinfo` → pack, autor, tamanho e quadros',
+      '`.sticker auto on` → o que você mandar no seu chat vira figurinha',
+      '`.sticker on` / `.sticker off` → liga / desliga'
+    ])
   ], { footer: true });
 }
-
 /* ───────────────────────── parser de opções ───────────────────────── */
 
 const strip = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();

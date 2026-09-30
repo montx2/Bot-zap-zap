@@ -71,6 +71,8 @@ O número usa país + DDD + número, apenas dígitos. O código aparece no termi
 
 ## Comandos principais
 
+Dentro do chat, `.menu` mostra tudo organizado por *o que você quer fazer* (figurinha, ver o que só aparece uma vez, transformar mídia, achar e guardar, monitorar alguém, grupo, extras) — cada linha explica o que o comando faz. `.menu figurinha` abre o guia completo de figurinhas.
+
 ```text
 .menu
 .vo                  # painel da visualização única
