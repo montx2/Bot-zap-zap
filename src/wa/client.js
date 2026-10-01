@@ -11,6 +11,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
+  generateMessageIDV2,
   DisconnectReason,
   Browsers
 } from '@whiskeysockets/baileys';
@@ -22,6 +23,9 @@ import { ENV } from '../core/config.js';
 import { log, banner, baileysLogger } from '../core/logger.js';
 import { DATA_DIR, ensureDirs, readJson, writeJsonNow } from '../core/store.js';
 import { isTermux, platformBanner } from '../core/platform.js';
+import { markBotSent, isBotSent } from './cache.js';
+
+export { markBotSent, isBotSent };
 
 const AUTH_DIR = path.join(DATA_DIR, 'auth');
 const PAIR_FILE = path.join(DATA_DIR, 'pairing-number.txt');
@@ -123,10 +127,10 @@ function printQR(qr) {
     .then((mod) => {
       const qrcode = mod.default || mod;
       banner([
-        '🔗 ESCANEIE O QR CODE',
+        '◆ ESCANEIE O QR CODE',
         '',
-        'WhatsApp → Dispositivos conectados →',
-        'Conectar um dispositivo'
+        'WhatsApp › Dispositivos conectados',
+        '› Conectar um dispositivo'
       ]);
       qrcode.generate(qr, { small: true });
     })
@@ -185,6 +189,21 @@ export async function startClient(handlers = {}) {
     emitOwnEvents: true,
     logger: baileysLogger
   });
+  clientSocket.creds = state.creds;
+
+  // Envolve sendMessage para registrar o ID ANTES que o Baileys dispare messages.upsert
+  // (evita que o próprio envio do bot acione auto-download, view once por resposta, etc.)
+  const origSendMessage = clientSocket.sendMessage.bind(clientSocket);
+  clientSocket.sendMessage = async (jid, content, options = {}) => {
+    const msgId =
+      options?.messageId ||
+      (typeof generateMessageIDV2 === 'function' ? generateMessageIDV2(clientSocket.user?.id) : undefined);
+    if (msgId) markBotSent(msgId);
+    const res = await origSendMessage(jid, content, msgId ? { ...options, messageId: msgId } : options);
+    if (res?.key?.id) markBotSent(res.key.id);
+    return res;
+  };
+
   socket = clientSocket;
 
   clientSocket.ev.on('creds.update', saveCreds);
@@ -207,11 +226,11 @@ export async function startClient(handlers = {}) {
         fs.rmSync(PAIR_CODE_FILE, { force: true });
       } catch {}
       banner([
-        '⚡ N E X U S  B O T ⚡',
+        '◆ MontxBOT',
         '',
-        `✅ Conectado como ${user?.name || ''} (${user?.id?.split('@')[0] || '?'})`,
+        `✓ Conectado como ${user?.name || ''} (${user?.id?.split('@')[0] || '?'})`,
         platformBanner(),
-        'Digite .menu no WhatsApp para começar 🚀'
+        '▸ Digite .menu no WhatsApp para começar'
       ]);
       handlers.onOpen?.(clientSocket);
     }
@@ -238,6 +257,7 @@ export async function startClient(handlers = {}) {
   clientSocket.ev.on('messages.upsert', async ({ messages, type }) => {
     if (socket !== clientSocket) return;
     for (const msg of messages) {
+      if (msg?.key?.id && isBotSent(msg.key.id)) continue;
       try {
         await handlers.onMessage?.(clientSocket, msg, type);
       } catch (error) {
@@ -264,6 +284,7 @@ export async function startClient(handlers = {}) {
   let pairingStarted = false;
   function triggerPairing() {
     if (pairingStarted || state.creds.registered) return;
+    pairingStarted = true;
     (async () => {
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (stopping || socket !== clientSocket || state.creds.registered) return;
@@ -277,16 +298,16 @@ export async function startClient(handlers = {}) {
           } catch {}
 
           banner([
-            '📱 CÓDIGO DE PAREAMENTO',
+            '◆ CÓDIGO DE PAREAMENTO',
             '',
-            `          ${pretty}`,
+            `    ${pretty}`,
             '',
-            `Número: ${maskNumber(pairingNumber)}  (tem que ser o MESMO do WhatsApp)`,
-            '⏱️ Digite AGORA. Não feche o Termux nem deixe a rede cair.',
-            'Se aparecer outro código depois, use SÓ o mais novo.',
+            `Número: ${maskNumber(pairingNumber)}  (deve ser o MESMO do WhatsApp)`,
+            '⚠ Digite agora. Não feche o Termux nem deixe a rede cair.',
+            'Se surgir outro código, use somente o mais novo.',
             '',
-            'WhatsApp → Dispositivos conectados →',
-            'Conectar com número de telefone'
+            'WhatsApp › Dispositivos conectados',
+            '› Conectar com número de telefone'
           ]);
           return;
         } catch (error) {

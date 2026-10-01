@@ -97,3 +97,18 @@ export class MessageCache {
 }
 
 export const messageCache = new MessageCache();
+
+const sentByBot = new Set();
+
+export function markBotSent(id) {
+  if (!id) return;
+  sentByBot.add(id);
+  if (sentByBot.size > 5000) {
+    sentByBot.delete(sentByBot.values().next().value);
+  }
+}
+
+export function isBotSent(id) {
+  return Boolean(id && sentByBot.has(id));
+}
+

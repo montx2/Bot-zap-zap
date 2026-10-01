@@ -7,14 +7,15 @@ Tudo que importa, nada que atrapalha:
 
 | Recurso | Descrição |
 |---|---|
-| 👁️ **View Once** | Captura automática + **responda QUALQUER view once com QUALQUER mensagem** e ela é baixada |
-| 🛡️ **Anti-Delete** | **Ligado em tudo por padrão**, com filtro de ignorar (grupos, privado, chats específicos) |
+| 👁️ **View Once** | Captura automática + responda qualquer view once com qualquer mensagem — **100% silenciosa, vai SÓ pro seu privado (0 rastros)** |
+| 🛡️ **Anti-Delete** | **Ligado em tudo por padrão** — tudo que apagarem vai **SÓ pro seu privado (0 rastros)**, com filtros de ignorar |
 | 🖼️ **Figurinhas** | Imagem, vídeo, GIF e figurinha→figurinha, **com remoção de fundo por IA** |
 | 🎭 **Remoção de fundo** | Pool de APIs com várias contas girando (estilo "requisições ilimitadas") |
 | 🧠 **IA completa** | Chat, geração de imagens, voz, tradução e resumo — com pool de chaves + fallback grátis |
-| ⬇️ **Downloader universal** | Pinterest, TikTok, Instagram, YouTube, X, Facebook, Threads, Reddit e +200 sites |
+| ⬇️ **Downloader universal** | TikTok, Instagram, Pinterest, YouTube, X, Facebook, Threads, Reddit, Twitch, Vimeo e a cauda longa |
 | 🎚️ **Qualidade** | Sempre a **MELHOR por padrão**; peça `baixa` para reduzir |
-| 🎨 **Menu limpo** | `.menu` bonito e direto, qualquer pessoa entende |
+| 🔒 **Privacidade** | Só você manda. Quem você liberar com `.ativar` usa tudo, **menos View Once e Anti-Delete** (que nunca aparecem pra ninguém) |
+| 🎨 **Menu duplo** | Um menu completo só no seu privado e um menu público nos chats liberados |
 
 ---
 
@@ -56,23 +57,24 @@ npm start                            # escaneie o QR no terminal
 
 Mande **`.menu`** no WhatsApp. Resumo:
 
-### 👁️ View Once
-- **Captura automática**: toda view once recebida é salva e enviada para você (dono).
-- **Por resposta**: responda a view once com *qualquer mensagem* (um "oi", um emoji, `.s`…) e o bot baixa na hora, no próprio chat.
-- Configurar: `.vo auto on|off` · `.vo destino dono|chat` · `.vo resposta todos|dono`
+### 👁️ View Once — 100% silenciosa
+- **Captura automática**: toda view once recebida é baixada e enviada **somente para o seu privado**.
+- **Por resposta**: responda a view once com *qualquer mensagem* (um "oi", um emoji, `.s`…) **em qualquer conversa ou grupo** e o bot baixa a mídia e manda direto pro seu privado.
+- **Zero rastros**: o bot nunca reenvia a mídia no grupo nem na conversa da outra pessoa, e nunca responde nada lá.
+- Configurar: `.vo` (status) · `.vo on` · `.vo off`
 
-### 🛡️ Anti-Delete
-Vem **ligado em todos os chats**. Quando alguém apaga, o bot restaura a mensagem ali mesmo.
+### 🛡️ Anti-Delete — 100% silencioso
+Vem **ligado em todos os chats**. Quando alguém apaga, o bot manda o conteúdo recuperado **somente para o seu privado** — nada volta pro grupo ou pro chat de origem.
 
 ```
 .antidelete                    → status
 .antidelete ignorar grupos     → para de proteger grupos
 .antidelete ignorar privado    → para de proteger PVs
 .antidelete ignorar aqui       → ignora o chat atual
+.antidelete ignorar <número>   → ignora um contato específico
 .antidelete remover grupos     → volta a proteger
 .antidelete lista              → ver filtros
 .antidelete on | off           → liga/desliga global (só o dono)
-.antidelete dono               → também mandar cópia pro dono
 ```
 
 ### 🖼️ Figurinhas
@@ -91,11 +93,31 @@ Dica: dá pra responder uma **view once** com `.s` e transformar em figurinha. �
 .ttmp3 <link>               → só a música do TikTok
 .pin <link> [qualidade]     → Pinterest (foto original, vídeo e GIF)
 .insta <link> [qualidade]   → Instagram (reels, posts, carrossel)
+.yt <link> [qualidade]      → YouTube
+.ytmp3 <link>               → só o áudio do YouTube
+.tw <link>                  → X/Twitter (vídeo, GIF e fotos)
+.face <link>                → Facebook (vídeos e reels públicos)
 ```
 - **Qualidades**: `melhor` (padrão 👑), `alta`, `media`, `baixa` — em qualquer ordem: `.tiktok baixa <link>`
 - **Auto-download**: cole o link solto no chat que ele baixa sozinho.
-- Redes cobertas via Cobalt: YouTube, X/Twitter, Facebook, Threads, Reddit, Snapchat,
-  Vimeo, Twitch, SoundCloud e centenas de outras.
+- Redes com extrator próprio: TikTok, Instagram, Pinterest, YouTube, X, Facebook,
+  Threads, Reddit, Twitch e Vimeo. A cauda longa (Snapchat, SoundCloud,
+  Dailymotion e centenas de sites) passa pelo Cobalt e pelo yt-dlp.
+
+**Como cada rede é baixada** (métodos reais, não chute):
+
+| Rede | Estratégia principal | Reservas |
+|---|---|---|
+| TikTok | TikWM (`/api/` com `hd=1`, sem `web:1`) | Cobalt (túnel) → scraping direto |
+| Instagram | Página de incorporação (`/p/<code>/embed/captioned/`) lendo o `contextJSON` | Visão de crawler com UA do facebookexternalhit → Cobalt |
+| Pinterest | Widget API (`widgets.pinterest.com/v3/pidgets/pins/info/`) | SSR `__PWS_DATA__` → savepin → Cobalt |
+| YouTube | Innertube (clientes ANDROID_VR e IOS) | Cobalt → yt-dlp |
+| X/Twitter | vxtwitter (`api.vxtwitter.com`) | fxtwitter → Cobalt |
+| Facebook | Plugin público de vídeo (`browser_native_hd_url`) | Página direta → Cobalt |
+| Threads/Reddit/Twitch/Vimeo | Embed público de cada um | Cobalt |
+
+> 🧰 **Modo turbo**: se você tiver o `yt-dlp` instalado (`pip install -U yt-dlp` no
+> Termux), o bot detecta e usa como reserva fortíssima para qualquer site.
 
 ### 🧠 IA
 ```
@@ -169,7 +191,8 @@ COBALT_INSTANCES=https://sua-instancia.cobalt,https://outra-instancia
 ## 🧪 Testes
 
 ```bash
-npm test          # 36 testes offline (lógica, roteamento, anti-delete, view once)
+npm test          # 68 testes offline (lógica, roteamento, anti-delete, view once,
+                  # figurinhas WebP/EXIF e todos os extratores de redes sociais)
 npm run doctor    # diagnóstico do ambiente
 ```
 
@@ -182,7 +205,10 @@ npm run doctor    # diagnóstico do ambiente
 | Loop de 405 ao conectar | O bot já faz cache da versão do WA Web; se persistir: `WA_VERSION_OVERRIDE=2,3000,REVISAO` |
 | Figurinha não sai | Falta FFmpeg: `pkg install ffmpeg` / `apt install ffmpeg` / `winget install ffmpeg` |
 | `.sfundo` pede configuração | Coloque chaves em `REMOVE_BG_KEYS` no `.env` |
-| Download do Instagram falha | IG bloqueia muitos IPs; o bot tenta 3 estratégias — tente de novo ou use `.dl` |
+| Download falha em alguma rede | O bot tenta em cascata (extrator da rede → Cobalt → yt-dlp → scraping). Tente de novo ou use `.dl <link>` |
+| Download do Instagram falha | IG bloqueia muitos IPs; o bot tenta incorporação → visão de crawler → Cobalt |
+| Áudio do YouTube não sai | Instale o yt-dlp (`pip install -U yt-dlp`) para destravar o modo turbo |
+| Ninguém do grupo consegue usar | Dê `.ativar` dentro do grupo (tem que ser você, o dono) |
 | Bot cai no Termux ao fechar | `termux-wake-lock` e não mate o app nas configurações de bateria |
 
 ## 🧱 Estrutura
@@ -193,7 +219,8 @@ src/
 ├── core/                 # config, env, http, keypool (motor de contas), store
 ├── wa/                   # conexão Baileys (QR/código) + cache de mensagens
 ├── features/             # viewonce, antidelete, sticker, bgremoval, ai, download
-│   └── downloaders/      # tiktok (tikwm), pinterest, instagram, cobalt, qualidade
+│   └── downloaders/      # tiktok, instagram, pinterest, youtube, twitter,
+│                         # facebook, generic, cobalt, ytdlp, media, qualidade
 └── util/                 # ffmpeg, webp (exif), texto
 ```
 
