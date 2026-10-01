@@ -69,8 +69,9 @@ async function boot() {
       owner.setFromSocket(sock);
       log.ok('NEXUS está no ar. 🚀');
     },
-    onMessage: async (sock, msg) => {
+    onMessage: async (sock, msg, type) => {
       const deps = {
+        type, // 'notify' (ao vivo) | 'append' (histórico) | 'update'
         ownerJid: owner.jid,
         // fromMe = enviado pela própria conta do bot = o dono falando.
         isOwner: (jid, participant) => !!msg.key?.fromMe || owner.isOwner(sock, jid, participant),
