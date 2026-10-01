@@ -7,7 +7,7 @@ import { readJson, writeJsonNow, writeJsonDebounced } from './store.js';
 import { envList, envBool } from './env.js';
 
 export const DEFAULT_CONFIG = {
-  nomeBot: '⚡ NEXUS',
+  nomeBot: 'MontxBOT',
   nomePack: 'MontxBOT',
   autorPack: '×by ꧁montx2_꧂',
   prefixos: ['.', '!', '/', '#'],
@@ -41,8 +41,8 @@ export const DEFAULT_CONFIG = {
     modeloImagem: 'flux', // flux | turbo
     vozPadrao: 'nova', // alloy echo fable onyx nova shimmer
     sistema:
-      'Você é o NEXUS, um assistente de WhatsApp esperto, direto e bem-humorado. ' +
-      'Responda sempre em português do Brasil, curto e útil. Use emojis com moderação.'
+      'Você é o MontxBOT, um assistente de WhatsApp claro, direto e cordial. ' +
+      'Responda sempre em português do Brasil, de forma curta e útil. Use emojis com muita moderação.'
   },
 
   // ── Comportamento ─────────────────────────────────────────
@@ -65,6 +65,18 @@ class Config {
     if (!Array.isArray(merged.antiDelete.ignorar)) merged.antiDelete.ignorar = [];
     if (!Array.isArray(merged.autorizados)) merged.autorizados = [];
     if (typeof merged.modoPrivado !== 'boolean') merged.modoPrivado = true;
+
+    // Nome do bot: quem ainda tem o nome padrão antigo passa para o novo.
+    if (merged.nomeBot === '⚡ NEXUS' || merged.nomeBot === 'NEXUS') {
+      merged.nomeBot = DEFAULT_CONFIG.nomeBot;
+      if (saved) writeJsonNow(FILE, merged);
+    }
+
+    // Persona da IA: troca o nome antigo, mantendo prompts personalizados.
+    if (typeof merged.ia?.sistema === 'string' && merged.ia.sistema.startsWith('Você é o NEXUS, um assistente de WhatsApp esperto')) {
+      merged.ia.sistema = DEFAULT_CONFIG.ia.sistema;
+      if (saved) writeJsonNow(FILE, merged);
+    }
 
     // Assinatura: quem ainda tem a assinatura padrão antiga passa para a nova
     // (se você personalizou o nome/autor, o seu valor é mantido).

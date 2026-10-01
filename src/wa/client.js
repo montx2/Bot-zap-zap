@@ -127,10 +127,10 @@ function printQR(qr) {
     .then((mod) => {
       const qrcode = mod.default || mod;
       banner([
-        '🔗 ESCANEIE O QR CODE',
+        '◆ ESCANEIE O QR CODE',
         '',
-        'WhatsApp → Dispositivos conectados →',
-        'Conectar um dispositivo'
+        'WhatsApp › Dispositivos conectados',
+        '› Conectar um dispositivo'
       ]);
       qrcode.generate(qr, { small: true });
     })
@@ -226,11 +226,11 @@ export async function startClient(handlers = {}) {
         fs.rmSync(PAIR_CODE_FILE, { force: true });
       } catch {}
       banner([
-        '⚡ N E X U S  B O T ⚡',
+        '◆ MontxBOT',
         '',
-        `✅ Conectado como ${user?.name || ''} (${user?.id?.split('@')[0] || '?'})`,
+        `✓ Conectado como ${user?.name || ''} (${user?.id?.split('@')[0] || '?'})`,
         platformBanner(),
-        'Digite .menu no WhatsApp para começar 🚀'
+        '▸ Digite .menu no WhatsApp para começar'
       ]);
       handlers.onOpen?.(clientSocket);
     }
@@ -298,16 +298,16 @@ export async function startClient(handlers = {}) {
           } catch {}
 
           banner([
-            '📱 CÓDIGO DE PAREAMENTO',
+            '◆ CÓDIGO DE PAREAMENTO',
             '',
-            `          ${pretty}`,
+            `    ${pretty}`,
             '',
-            `Número: ${maskNumber(pairingNumber)}  (tem que ser o MESMO do WhatsApp)`,
-            '⏱️ Digite AGORA. Não feche o Termux nem deixe a rede cair.',
-            'Se aparecer outro código depois, use SÓ o mais novo.',
+            `Número: ${maskNumber(pairingNumber)}  (deve ser o MESMO do WhatsApp)`,
+            '⚠ Digite agora. Não feche o Termux nem deixe a rede cair.',
+            'Se surgir outro código, use somente o mais novo.',
             '',
-            'WhatsApp → Dispositivos conectados →',
-            'Conectar com número de telefone'
+            'WhatsApp › Dispositivos conectados',
+            '› Conectar com número de telefone'
           ]);
           return;
         } catch (error) {

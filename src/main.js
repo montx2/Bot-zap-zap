@@ -19,13 +19,13 @@ import { isGroup } from './util/text.js';
 ensureDirs();
 
 banner([
-  '⚡ N E X U S   B O T  v7.0 ⚡',
+  '◆ MontxBOT  ·  v7.0',
   '',
   platformBanner(),
-  isTermux() ? '📱 Modo Termux: pareamento por código (sem QR)' : '🖥️ Modo desktop: QR Code habilitado',
-  '🔒 Modo Privado: exclusivo no privado do dono (.ativar p/ liberar figurinhas)',
-  `🎭 Fundo: ${bgStatus()[0]}`,
-  hasFfmpeg() ? '🎬 FFmpeg: ok' : '⚠️ FFmpeg ausente (figurinhas não funcionarão)'
+  isTermux() ? '▸ Termux: pareamento por código (sem QR)' : '▸ Desktop: QR Code habilitado',
+  '▸ Modo privado: exclusivo do dono (.ativar libera um chat)',
+  `▸ Remoção de fundo: ${bgStatus()[0]}`,
+  hasFfmpeg() ? '▸ FFmpeg: ok' : '⚠ FFmpeg ausente (figurinhas não funcionarão)'
 ]);
 
 if (!hasFfmpeg()) {
@@ -111,7 +111,7 @@ async function boot() {
   await startClient({
     onOpen(sock) {
       owner.setFromSocket(sock);
-      log.ok(`NEXUS está no ar (modo privado exclusivo: ${owner.jid || 'dono'}). 🚀`);
+      log.ok(`MontxBOT no ar  ·  modo privado exclusivo (${owner.jid || 'dono'})`);
     },
     onMessage: async (sock, msg, type) => {
       owner.setFromSocket(sock);

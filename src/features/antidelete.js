@@ -4,6 +4,7 @@
 // Filtros de ignorar configuráveis:
 //   .antidelete ignorar grupos | privado | <jid> | aqui
 
+import { SYM, header as uiHeader, section as uiSection, kv, toggle } from '../core/ui.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { cfg } from '../core/config.js';
 import { log, baileysLogger } from '../core/logger.js';
@@ -51,11 +52,12 @@ function findMedia(message) {
 
 function header(entry, chatJid) {
   const who = entry.pushName || entry.sender?.split('@')[0] || 'Alguém';
-  const where = isGroup(chatJid) ? `\n📍 Grupo: ${chatJid.split('@')[0]}` : `\n💬 Chat: ${chatJid.split('@')[0]}`;
+  const where = isGroup(chatJid) ? `Grupo ${chatJid.split('@')[0]}` : `Chat ${chatJid.split('@')[0]}`;
   return [
-    '🛡️ *ANTI-DELETE — MENSAGEM APAGADA*',
-    `👤 Autor: *${who}*${where}`,
-    `🕒 Original: ${formatDate(entry.ts)}`
+    `${SYM.section} *ANTI-DELETE*  ${SYM.detail}  _mensagem apagada_`,
+    kv('Autor', who),
+    kv('Onde', where),
+    kv('Enviada', formatDate(entry.ts))
   ].join('\n');
 }
 
@@ -159,17 +161,17 @@ export function extractAnyText(message) {
 export function statusText(jid) {
   const s = cfg.get().antiDelete;
   const ignoredHere = isIgnored(jid, s.ignorar);
-  const rules = s.ignorar.length ? s.ignorar.map((r) => `• ${r}`).join('\n') : '• nenhum — protegendo TUDO';
   return [
-    '🛡️ *ANTI-DELETE*',
+    uiHeader('Anti-Delete', 'proteção silenciosa'),
     '',
-    `Status global: ${s.ativo ? '✅ ATIVO (envia só no seu privado)' : '❌ desativado'}`,
-    `Destino: 🔒 Exclusivo no privado do dono`,
-    `Neste chat: ${ignoredHere ? '⛔ IGNORADO' : '🟢 monitorado'}`,
+    [
+      kv('Status', toggle(s.ativo, 'ativo', 'desativado')),
+      kv('Destino', 'somente o seu privado'),
+      kv('Neste chat', ignoredHere ? `${SYM.off} ignorado` : `${SYM.on} monitorado`)
+    ].join('\n'),
     '',
-    '*Filtros de ignorar:*',
-    rules,
+    uiSection('Filtros', s.ignorar.length ? s.ignorar : ['nenhum, protegendo tudo']),
     '',
-    '_Use_ `.antidelete ignorar grupos` _para adicionar filtros._'
+    '_Adicione com_ `.antidelete ignorar grupos`'
   ].join('\n');
 }

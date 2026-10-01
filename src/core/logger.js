@@ -43,14 +43,11 @@ export const log = {
 };
 
 export function banner(lines) {
-  const border = c('cyan', '╔' + '═'.repeat(58) + '╗');
-  const footer = c('cyan', '╚' + '═'.repeat(58) + '╝');
-  console.log(border);
-  for (const line of lines) {
-    const pad = Math.max(0, 58 - stripAnsi(line).length);
-    console.log(c('cyan', '║ ') + line + ' '.repeat(pad) + c('cyan', '║'));
-  }
-  console.log(footer);
+  // Só borda esquerda: sem borda direita nada desalinha quando há símbolos largos.
+  const rule = '─'.repeat(44);
+  console.log(c('cyan', '╭' + rule));
+  for (const line of lines) console.log(c('cyan', '│ ') + line);
+  console.log(c('cyan', '╰' + rule));
 }
 
 function stripAnsi(s) {

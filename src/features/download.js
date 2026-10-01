@@ -8,6 +8,7 @@
 //   TikTok · Instagram · Pinterest · YouTube · X/Twitter · Facebook
 //   Threads · Reddit · Twitch · Vimeo
 
+import { SYM, ok, warn, fail, wait } from '../core/ui.js';
 import { cfg } from '../core/config.js';
 import { log } from '../core/logger.js';
 import { fetchBuffer, formatBytes, mediaReferer } from '../core/http.js';
@@ -91,7 +92,7 @@ async function withBuffers(result, onProgress) {
   const buffers = [];
   for (let i = 0; i < items.length; i++) {
     if (items.length > 1) {
-      await onProgress?.(`⬇️ Baixando mídia ${i + 1}/${items.length}…`);
+      await onProgress?.(wait(`Baixando mídia ${i + 1}/${items.length}`));
     }
     buffers.push(await downloadMedia(items[i].url, onProgress));
   }
@@ -126,7 +127,7 @@ async function firstOf(strategies) {
 export async function resolveDownload(url, quality = 'melhor', { audioOnly = false, onProgress } = {}) {
   const platform = detectPlatform(url) || 'Web';
   const qLabel = qualityLabel(quality);
-  await onProgress?.(`⬇️ Buscando em *${platform}* (${qLabel})…`);
+  await onProgress?.(wait(`Buscando em ${platform} · ${qLabel}`));
 
   const strategies = [];
 
@@ -169,7 +170,7 @@ export async function resolveDownload(url, quality = 'melhor', { audioOnly = fal
     strategies.push([
       'yt-dlp',
       async () => {
-        await onProgress?.('🧰 Usando yt-dlp local…');
+        await onProgress?.(wait('Usando yt-dlp local'));
         const { buffer } = await ytdlpBuffer(url, { audioOnly });
         const info = await ytdlpInfo(url).catch(() => null);
         return {
@@ -218,11 +219,11 @@ export async function sendDownload(sock, jid, result, { quality, url, onProgress
   const maxMB = Number(cfg.get().maxMB) || 90;
   const qLabel = qualityLabel(quality);
   const header = [
-    `⬇️ *${result.platform || 'Download'}* · ${qLabel}`,
-    result.title ? `📝 ${truncate(result.title, 300)}` : null,
-    result.author ? `👤 ${result.author}` : null,
+    `${SYM.section} *${result.platform || 'Download'}*  ${SYM.detail}  _${qLabel}_`,
+    result.title ? ` ${SYM.detail} ${truncate(result.title, 300)}` : null,
+    result.author ? ` ${SYM.detail} ${result.author}` : null,
     result.duration
-      ? `⏱️ ${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}`
+      ? ` ${SYM.detail} ${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}`
       : null
   ]
     .filter(Boolean)
@@ -237,17 +238,18 @@ export async function sendDownload(sock, jid, result, { quality, url, onProgress
     const buffer = buffers[i];
     const mb = buffer.length / (1024 * 1024);
     if (mb > maxMB) {
-      const warnMsg =
-        `⚠️ Arquivo ${i + 1} tem ${formatBytes(buffer.length)} (> ${maxMB} MB) — o WhatsApp não aceita. ` +
-        `Tente qualidade *baixa* ou aumente \`.config maxMB 120\`.`;
+      const warnMsg = warn(
+        `Arquivo ${i + 1} excede o limite (${formatBytes(buffer.length)} > ${maxMB} MB)`,
+        'tente a qualidade baixa ou aumente com .config maxMB 120'
+      );
       if (onProgress) await onProgress(warnMsg);
       else await sock.sendMessage(jid, { text: warnMsg }, sendOpts);
       continue;
     }
     await onProgress?.(
       buffers.length > 1
-        ? `📤 Enviando mídia ${i + 1}/${buffers.length} (${formatBytes(buffer.length)})…`
-        : `📤 Enviando mídia (${formatBytes(buffer.length)})…`
+        ? wait(`Enviando mídia ${i + 1}/${buffers.length} · ${formatBytes(buffer.length)}`)
+        : wait(`Enviando mídia · ${formatBytes(buffer.length)}`)
     );
     const caption = buffers.length > 1 ? `${header}\n(${i + 1}/${buffers.length})` : header;
     const type = result.media?.[i]?.type || result.kind;
@@ -270,9 +272,9 @@ export async function sendDownload(sock, jid, result, { quality, url, onProgress
     await sock.sendMessage(jid, { audio: result.audioBuffer, mimetype: 'audio/mpeg' }, sendOpts).catch(() => {});
   }
   if (sent > 0) {
-    await onProgress?.(`✅ Download de *${result.platform || 'mídia'}* concluído!`);
+    await onProgress?.(ok('Download concluído', result.platform || 'mídia'));
   } else {
-    await onProgress?.('😕 Nada foi enviado (arquivo grande demais?).');
+    await onProgress?.(warn('Nada foi enviado', 'o arquivo pode ser grande demais'));
   }
   return sent;
 }
@@ -292,12 +294,12 @@ export async function autoDownload(sock, msg, urls, { reply }) {
     const platform = detectPlatform(url) || 'Web';
     try {
       log.dl(`auto-download ${platform}: ${url.slice(0, 80)}`);
-      await reply(`⬇️ Baixando de *${platform}*…`);
+      await reply(wait(`Baixando de ${platform}`));
       const result = await resolveDownload(url, quality, { onProgress: reply });
       await sendDownload(sock, msg.key.remoteJid, result, { quality, url, onProgress: reply, quoted: msg });
     } catch (error) {
       log.warn(`auto-download falhou: ${error.message}`);
-      await reply(`😕 Não consegui baixar esse link (${platform}): ${String(error.message).slice(0, 160)}`).catch(
+      await reply(fail(`Não consegui baixar (${platform})`, String(error.message).slice(0, 160))).catch(
         () => {}
       );
     }

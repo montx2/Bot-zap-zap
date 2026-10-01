@@ -65,7 +65,7 @@ function textMsg(jid, text, { from = jid, fromMe = jid === OWNER_JID, id, quoted
 test('fluxo: .menu no privado do dono responde com o menu', async () => {
   const sock = makeSock();
   await handleMessage(sock, textMsg(OWNER_JID, '.menu'), makeDeps(sock));
-  assert.ok(sock.sent.some((s) => typeof s.content.text === 'string' && s.content.text.includes('NEXUS')));
+  assert.ok(sock.sent.some((s) => typeof s.content.text === 'string' && s.content.text.includes('MontxBOT')));
 });
 
 test('fluxo: .ping no privado do dono responde pong editando a mensagem de progresso', async () => {
@@ -279,7 +279,7 @@ test('sticker sem mídia responde instruções no privado do dono', async () => 
 test('.ia sem pergunta responde instruções no privado do dono', async () => {
   const sock = makeSock();
   await handleMessage(sock, textMsg(OWNER_JID, '.ia'), makeDeps(sock));
-  assert.ok(sock.sent.some((s) => (s.content.text || '').includes('Pergunte')));
+  assert.ok(sock.sent.some((s) => (s.content.text || '').includes('.ia <pergunta>')));
 });
 
 test('comando desconhecido não responde por padrão', async () => {
