@@ -81,22 +81,35 @@ export function detectMediaExt(buf, fallback = '.jpg') {
   return fallback.startsWith('.') ? fallback : `.${fallback}`;
 }
 
-function buildStickerFilter({ animated, fps = 15, simple = false }) {
+/**
+ * Modos de enquadramento da figurinha (sempre sai 512x512):
+ *  - 'fill'  (padrão): preenche TODO o quadrado, esticando se preciso (sem bordas vazias)
+ *  - 'contain'       : imagem inteira, proporção original, com margem transparente
+ *  - 'cover'         : preenche o quadrado SEM esticar, cortando o excesso (centralizado)
+ */
+export const STICKER_FITS = ['fill', 'contain', 'cover'];
+
+export function buildStickerFilter({ animated, fps = 15, simple = false, fit = 'fill' }) {
+  const flags = simple ? '' : `:flags=${animated ? 'bicubic' : 'lanczos'}`;
   const parts = [];
   if (animated) parts.push(`fps=${fps}`);
   parts.push('format=rgba');
-  if (simple) {
-    parts.push('scale=512:512:force_original_aspect_ratio=decrease');
+  if (fit === 'contain') {
+    parts.push(`scale=512:512:force_original_aspect_ratio=decrease${flags}`);
+    parts.push('pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000');
+  } else if (fit === 'cover') {
+    parts.push(`scale=512:512:force_original_aspect_ratio=increase${flags}`);
+    parts.push('crop=512:512');
   } else {
-    parts.push(`scale=512:512:force_original_aspect_ratio=decrease:flags=${animated ? 'bicubic' : 'lanczos'}`);
+    parts.push(`scale=512:512:force_original_aspect_ratio=disable${flags}`);
   }
-  parts.push('pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000', 'setsar=1');
+  parts.push('setsar=1');
   return parts.join(',');
 }
 
-async function encodeStep(inFile, outFile, { animated, q, fps = 15, dur = 7 }) {
+async function encodeStep(inFile, outFile, { animated, q, fps = 15, dur = 7, fit = 'fill' }) {
   const buildArgs = ({ simpleFilter = false, omitVsync = false } = {}) => {
-    const vf = buildStickerFilter({ animated, fps, simple: simpleFilter });
+    const vf = buildStickerFilter({ animated, fps, simple: simpleFilter, fit });
     const args = ['-y'];
     if (animated) args.push('-t', String(dur));
     args.push(
@@ -141,7 +154,7 @@ async function encodeStep(inFile, outFile, { animated, q, fps = 15, dur = 7 }) {
  * @param {{animated?: boolean, maxSeconds?: number, ext?: string, onProgress?: (msg: string) => Promise<any>}} opts
  * @returns {Promise<{buffer: Buffer, animated: boolean}>}
  */
-export async function toStickerWebp(input, { animated = false, maxSeconds = 8, ext = '.png', onProgress } = {}) {
+export async function toStickerWebp(input, { animated = false, maxSeconds = 8, ext = '.png', fit = 'fill', onProgress } = {}) {
   const realExt = detectMediaExt(input, ext);
   const inFile = tmpFile(realExt);
   const outFile = tmpFile('.webp');
@@ -170,7 +183,7 @@ export async function toStickerWebp(input, { animated = false, maxSeconds = 8, e
             : `🗜️ Ajustando peso da figurinha (${i + 1}/${steps.length})…`
         );
       }
-      await encodeStep(inFile, outFile, { animated, ...step });
+      await encodeStep(inFile, outFile, { animated, fit, ...step });
       if (!fs.existsSync(outFile)) throw new Error('ffmpeg não gerou saída');
       const buf = fs.readFileSync(outFile);
       if (!buf.length || !isWebp(buf)) throw new Error('ffmpeg gerou um WebP inválido');

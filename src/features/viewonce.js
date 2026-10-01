@@ -4,6 +4,7 @@
 // 2) RESPOSTA: se o dono responder uma view once REAL em qualquer chat, o bot baixa em silêncio
 //    e envia SOMENTE para o privado do dono (0 rastros na conversa ou no grupo).
 
+import { SYM, kv } from '../core/ui.js';
 import { downloadMediaMessage, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { cfg } from '../core/config.js';
 import { log, baileysLogger } from '../core/logger.js';
@@ -163,14 +164,15 @@ function captionFor(source, { auto }) {
     source.key?.participant?.split('@')[0] ||
     chatJid.split('@')[0] ||
     'desconhecido';
-  const where = isGroup(chatJid) ? `\n📍 Grupo: ${chatJid.split('@')[0]}` : `\n💬 Chat: ${chatJid.split('@')[0]}`;
+  const where = isGroup(chatJid) ? `Grupo ${chatJid.split('@')[0]}` : `Chat ${chatJid.split('@')[0]}`;
   return [
-    `${auto ? '👁️ *VIEW ONCE CAPTURADA*' : '👁️ *VIEW ONCE BAIXADA*'}`,
-    '',
-    `👤 De: ${who}${where}`,
-    `🕒 Recebida: ${formatDate(source.ts || Date.now())}`
+    `${SYM.section} *VIEW ONCE*  ${SYM.detail}  _${auto ? 'capturada' : 'baixada'}_`,
+    kv('De', who),
+    kv('Onde', where),
+    kv('Recebida', formatDate(source.ts || Date.now()))
   ].join('\n');
 }
+
 
 /**
  * Envia a mídia capturada EXCLUSIVAMENTE para o privado do dono (`ctx.ownerJid`).

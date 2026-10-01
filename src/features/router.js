@@ -15,8 +15,9 @@ import { cfg } from '../core/config.js';
 import { log } from '../core/logger.js';
 import { messageCache, isBotSent, markBotSent } from '../wa/cache.js';
 import { extractAnyText, isIgnored, normalizeIgnoreTarget, handleDelete, statusText } from './antidelete.js';
+import { SYM, header, section, card, footer, ok, fail, warn, wait, usage, kv, toggle } from '../core/ui.js';
 import { isViewOnce, onViewOnceMessage, onViewOnceReply, unwrapViewOnce } from './viewonce.js';
-import { extractStickerSource, makeSticker, packInfo, isAnimatedWebp } from './sticker.js';
+import { extractStickerSource, makeSticker, packInfo, isAnimatedWebp, parseFit } from './sticker.js';
 import { removeBackground, bgStatus, bgPools } from './bgremoval.js';
 import { aiChat, aiImage, aiVoice, aiTranslate, aiSummary, resetChatMemory, aiStatus } from './ai.js';
 import { resolveDownload, sendDownload, parseQuality, autoDownload, isKnownSocialUrl } from './download.js';
@@ -359,7 +360,7 @@ export async function handleMessage(sock, msg, deps) {
       });
     } catch (error) {
       log.error(`comando .${command.name} falhou`, error);
-      await reply(`❌ Deu ruim: ${String(error.message || error).slice(0, 220)}`).catch(() => {});
+      await reply(fail('Não foi possível concluir', String(error.message || error).slice(0, 220))).catch(() => {});
     }
     return;
   }
@@ -402,7 +403,7 @@ function parseCommand(text, prefixes) {
 
 function requireOwner(ctx, msg) {
   if (!ctx.isOwner(msg.key.remoteJid, msg.key.participant)) {
-    throw new Error('só o dono pode usar esse comando 👑');
+    throw new Error('este comando é exclusivo do dono');
   }
 }
 
@@ -427,9 +428,9 @@ async function runCommand(sock, msg, cmd, ctx) {
         cfg.save();
       }
       if (!inOwnerPrivate && target === bareId(jid)) {
-        return reply('✅ *Menu de figurinhas ativado neste chat!*\nDigite *.menu* para ver os comandos de figurinhas.');
+        return reply(ok('Bot ativado neste chat', 'digite .menu para ver os comandos'));
       }
-      return reply(`🔓 Menu de figurinhas ativado para: *${target}* ✅\nPara desativar: \`.desativar ${target}\``);
+      return reply(ok('Acesso liberado', `${target}  ·  para desativar: .desativar ${target}`));
     }
 
     case 'desativar':
@@ -440,7 +441,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       if (['tudo', 'todos', 'all'].includes(argText.trim().toLowerCase())) {
         cfg.get().autorizados = [];
         cfg.save();
-        return reply('🔒 Todos os grupos/chats foram desativados! O bot agora responde SOMENTE no seu privado.');
+        return reply(ok('Todos os chats foram bloqueados', 'o bot responde somente no seu privado'));
       }
       const target = normalizeAuthTarget(argText, msg);
       const tDigits = bareDigits(target);
@@ -449,9 +450,9 @@ async function runCommand(sock, msg, cmd, ctx) {
       );
       cfg.save();
       if (!inOwnerPrivate && target === bareId(jid)) {
-        return reply('🔒 *Menu de figurinhas desativado neste chat.*');
+        return reply(ok('Bot desativado neste chat'));
       }
-      return reply(`🔒 Acesso desativado para: *${target}* ✅`);
+      return reply(ok('Acesso removido', target));
     }
 
     case 'ativos':
@@ -461,18 +462,19 @@ async function runCommand(sock, msg, cmd, ctx) {
       const list = cfg.get().autorizados || [];
       if (!list.length) {
         return reply(
-          '🔒 *MODO PRIVADO ESTRITO*\n\nNenhum grupo ou chat está ativado além do seu privado.\nUse `.ativar` dentro do chat/grupo desejado (ou `.ativar 5531999999999`).'
+          card([
+            header('Chats liberados', 'modo privado'),
+            'Nenhum chat ou grupo liberado além do seu privado.',
+            usage('.ativar', '.ativar 5531999999999', 'Use dentro do chat/grupo, ou informe um número.')
+          ])
         );
       }
       return reply(
-        [
-          '🔓 *CHATS / GRUPOS ATIVADOS*',
-          '_(figurinhas, downloads e IA — nunca View Once/Anti-Delete)_',
-          '',
-          ...list.map((u) => `• ${u}`),
-          '',
-          '_Use `.desativar <número/aqui>` ou `.desativar tudo` para bloquear._'
-        ].join('\n')
+        card([
+          header('Chats liberados', `${list.length} ativo(s)`),
+          section('Lista', list),
+          footer('Bloqueie com .desativar <número|aqui> ou .desativar tudo')
+        ])
       );
     }
 
@@ -494,9 +496,9 @@ async function runCommand(sock, msg, cmd, ctx) {
 
     case 'ping': {
       const t0 = Date.now();
-      await reply('🏓 ping…');
+      await reply(wait('Testando ping'));
       const ms = Date.now() - t0;
-      return reply(`🏓 Pong! ${ms}ms`);
+      return reply(`${SYM.ok} *Pong*  ${SYM.detail}  ${ms} ms`);
     }
 
     case 'info':
@@ -542,14 +544,14 @@ async function runCommand(sock, msg, cmd, ctx) {
       if (!args.length) {
         const v = cfg.get().viewOnce;
         return reply(
-          [
-            '👁️ *VIEW ONCE (100% SILENCIOSO)*',
-            '',
-            `Captura automática: ${v.auto ? '✅ ligada' : '❌ desligada'}`,
-            'Destino: 🔒 Exclusivo no seu privado (0 rastros nos chats)',
-            '',
-            '💡 Responda qualquer view once em qualquer conversa que ela cai aqui no seu privado sem ninguém ver!'
-          ].join('\n')
+          card([
+            header('View Once', 'captura silenciosa'),
+            [
+              kv('Captura automática', toggle(v.auto, 'ligada', 'desligada')),
+              kv('Destino', 'somente o seu privado')
+            ].join('\n'),
+            usage('.vo on | off', null, 'Ou responda a qualquer view once para receber aqui.')
+          ])
         );
       }
       requireOwner(ctx, msg);
@@ -557,9 +559,9 @@ async function runCommand(sock, msg, cmd, ctx) {
       const v = cfg.get().viewOnce;
       if (sub === 'auto') v.auto = ['on', 'true', '1', 'sim'].includes(val);
       else if (sub === 'on' || sub === 'off') v.auto = sub === 'on';
-      else throw new Error('uso: .vo on|off');
+      else throw new Error('uso: .vo on | off');
       cfg.save();
-      return reply('👁️ Configuração da view once salva! ✅');
+      return reply(ok('View Once atualizado'));
     }
 
     // ── FIGURINHAS ──────────────────────────────────────
@@ -570,22 +572,22 @@ async function runCommand(sock, msg, cmd, ctx) {
     case 'stiker':
     case 'figurinha': {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
-      if (!source) return reply('📸 Envie ou responda uma *imagem, vídeo ou GIF* com *.s*!');
-      const webp = await makeSticker(source, { ...packInfo(), onProgress: reply });
-      await reply('📤 Enviando figurinha…');
+      if (!source) return reply(usage('.s', null, 'Envie ou responda uma imagem, vídeo ou GIF com o comando.'));
+      const webp = await makeSticker(source, { ...packInfo(), fit: parseFit(args), onProgress: reply });
+      await reply(wait('Enviando figurinha'));
       await sendStickerMessage(sock, jid, webp, msg);
-      return reply('✅ Figurinha criada com sucesso! 🖼️');
+      return reply(ok('Figurinha pronta'));
     }
 
     case 'sfundo':
     case 'stickerfundo':
     case 'sfundinho': {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
-      if (!source) return reply('📸 Envie ou responda uma *imagem* com *.sfundo*!');
-      const webp = await makeSticker(source, { ...packInfo(), removeBg: true, onProgress: reply });
-      await reply('📤 Enviando figurinha sem fundo…');
+      if (!source) return reply(usage('.sfundo', null, 'Envie ou responda uma imagem com o comando.'));
+      const webp = await makeSticker(source, { ...packInfo(), removeBg: true, fit: parseFit(args), onProgress: reply });
+      await reply(wait('Enviando figurinha sem fundo'));
       await sendStickerMessage(sock, jid, webp, msg);
-      return reply('✅ Figurinha sem fundo pronta! 🎭');
+      return reply(ok('Figurinha sem fundo pronta'));
     }
 
     case 'fundo':
@@ -593,28 +595,28 @@ async function runCommand(sock, msg, cmd, ctx) {
     case 'rmbg':
     case 'removebg': {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
-      if (!source) return reply('📸 Envie ou responda uma *imagem*!');
-      await reply('🎭 Removendo o fundo com IA…');
+      if (!source) return reply(usage('.fundo', null, 'Envie ou responda uma imagem com o comando.'));
+      await reply(wait('Removendo o fundo com IA'));
       const { buffer, via } = await removeBackground(source.buffer);
-      await reply('📤 Enviando PNG sem fundo…');
+      await reply(wait('Enviando PNG sem fundo'));
       const sent = await sock.sendMessage(
         jid,
-        { image: buffer, caption: `🎭 Fundo removido via *${via}*`, mimetype: 'image/png' },
+        { image: buffer, caption: `${SYM.ok} *Fundo removido*  ${SYM.detail}  _${via}_`, mimetype: 'image/png' },
         { quoted: msg }
       );
       if (sent?.key?.id) markBotSent(sent.key.id);
-      return reply(`✅ Fundo removido via *${via}*!`);
+      return reply(ok('Fundo removido', `via ${via}`));
     }
 
     case 'take':
     case 'renomear': {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
-      if (!source) return reply('🖼️ Responda uma *figurinha* com .take NomePack|NomeAutor');
+      if (!source) return reply(usage('.take Pack|Autor', '.take MeuPack|Eu', 'Responda a uma figurinha com o comando.'));
       const [pack = packInfo().pack, author = packInfo().author] = argText.split('|').map((s) => s.trim());
-      const webp = await makeSticker(source, { pack, author, onProgress: reply });
-      await reply('📤 Enviando figurinha renomeada…');
+      const webp = await makeSticker(source, { pack, author, fit: 'contain', onProgress: reply });
+      await reply(wait('Enviando figurinha renomeada'));
       await sendStickerMessage(sock, jid, webp, msg);
-      return reply(`✅ Pacote atualizado: *${pack}*`);
+      return reply(ok('Pacote atualizado', pack));
     }
 
     // ── IA ──────────────────────────────────────────────
@@ -624,11 +626,11 @@ async function runCommand(sock, msg, cmd, ctx) {
     case 'chat': {
       if (args[0]?.toLowerCase() === 'reset') {
         resetChatMemory(jid);
-        return reply('🧠 Memória da conversa limpa!');
+        return reply(ok('Conversa reiniciada', 'memória da IA limpa'));
       }
       const question = argText || extractAnyText(msg.message?.extendedTextMessage?.contextInfo?.quotedMessage || {});
-      if (!question) return reply('🧠 Pergunte algo! Ex.: `.ia qual a capital do Japão?`');
-      await reply('🧠 Pensando…');
+      if (!question) return reply(usage('.ia <pergunta>', '.ia qual a capital do Japão?'));
+      await reply(wait('Pensando'));
       const answer = await aiChat(jid, question);
       return reply(truncate(answer, 3800));
     }
@@ -638,26 +640,26 @@ async function runCommand(sock, msg, cmd, ctx) {
     case 'gerar':
     case 'imagine':
     case 'desenhar': {
-      if (!argText) return reply('🎨 Diga o que quer ver! Ex.: `.criar um gato astronauta em marte, realista`');
-      await reply('🎨 Gerando sua imagem com IA… (até 1 min)');
+      if (!argText) return reply(usage('.criar <ideia>', '.criar um gato astronauta em marte, realista'));
+      await reply(wait('Gerando sua imagem · pode levar até 1 min'));
       const buffer = await aiImage(argText);
-      await reply('📤 Enviando imagem gerada…');
+      await reply(wait('Enviando imagem'));
       const sent = await sock.sendMessage(jid, { image: buffer, caption: `🎨 "${truncate(argText, 200)}"` }, { quoted: msg });
       if (sent?.key?.id) markBotSent(sent.key.id);
-      return reply('✅ Imagem gerada com sucesso! 🎨');
+      return reply(ok('Imagem pronta'));
     }
 
     case 'voz':
     case 'tts':
     case 'falar': {
       const text2 = argText || extractAnyText(msg.message?.extendedTextMessage?.contextInfo?.quotedMessage || {});
-      if (!text2) return reply('🔊 Diga o que devo falar! Ex.: `.voz bom dia grupo`');
-      await reply('🔊 Gerando voz com IA…');
+      if (!text2) return reply(usage('.voz <texto>', '.voz bom dia, pessoal'));
+      await reply(wait('Gerando áudio'));
       const buffer = await aiVoice(truncate(text2, 900));
-      await reply('📤 Enviando áudio…');
+      await reply(wait('Enviando áudio'));
       const sent = await sock.sendMessage(jid, { audio: buffer, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
       if (sent?.key?.id) markBotSent(sent.key.id);
-      return reply('✅ Áudio enviado! 🔊');
+      return reply(ok('Áudio pronto'));
     }
 
     case 'traduz':
@@ -665,20 +667,20 @@ async function runCommand(sock, msg, cmd, ctx) {
       const [target, ...restArr] = args;
       let text3 = restArr.join(' ');
       if (!text3) text3 = extractAnyText(msg.message?.extendedTextMessage?.contextInfo?.quotedMessage || {});
-      if (!target || !text3) return reply('🌍 Ex.: `.traduz inglês boa tarde` (ou responda um texto)');
-      await reply(`🌍 Traduzindo para *${target}*…`);
+      if (!target || !text3) return reply(usage('.traduz <idioma> <texto>', '.traduz inglês boa tarde', 'Ou responda a um texto com o comando.'));
+      await reply(wait(`Traduzindo para ${target}`));
       const result = await aiTranslate(truncate(text3, 3000), target);
-      return reply(`🌍 *Tradução (${target}):*\n\n${truncate(result, 3800)}`);
+      return reply(`${SYM.section} *TRADUÇÃO*  ${SYM.detail}  _${target}_\n\n${truncate(result, 3800)}`);
     }
 
     case 'resumo':
     case 'resumir': {
       let text4 = argText;
       if (!text4) text4 = extractAnyText(msg.message?.extendedTextMessage?.contextInfo?.quotedMessage || {});
-      if (!text4) return reply('📄 Envie ou responda um texto grande com `.resumo`');
-      await reply('📄 Lendo e resumindo o texto…');
+      if (!text4) return reply(usage('.resumo <texto>', null, 'Envie ou responda a um texto longo com o comando.'));
+      await reply(wait('Resumindo'));
       const result = await aiSummary(truncate(text4, 6000));
-      return reply(`📄 *Resumo:*\n\n${truncate(result, 3800)}`);
+      return reply(`${SYM.section} *RESUMO*\n\n${truncate(result, 3800)}`);
     }
 
     // ── DOWNLOADS (qualquer rede social) ────────────────
@@ -693,7 +695,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       return downloadCommand({
         sock, msg, args, ctx,
         url: pickUrl(args),
-        fallback: '🎵 Manda o link! Ex.: `.tiktok https://vm.tiktok.com/…`'
+        fallback: usage('.tiktok <link>', '.tiktok https://vm.tiktok.com/…')
       });
 
     case 'ttmp3':
@@ -703,7 +705,7 @@ async function runCommand(sock, msg, cmd, ctx) {
         sock, msg, args, ctx,
         url: pickUrl(args),
         audioOnly: true,
-        fallback: '🎶 Manda o link do TikTok!'
+        fallback: usage('.ttmp3 <link>', null, 'Envie o link do TikTok para receber só o áudio.')
       });
 
     case 'pin':
@@ -712,7 +714,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       return downloadCommand({
         sock, msg, args, ctx,
         url: pickUrl(args),
-        fallback: '📌 Manda o link do Pinterest! (aceito até pin.it)'
+        fallback: usage('.pin <link>', null, 'Envie o link do Pinterest (aceita pin.it).')
       });
 
     case 'insta':
@@ -722,7 +724,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       return downloadCommand({
         sock, msg, args, ctx,
         url: pickUrl(args),
-        fallback: '📸 Manda o link do Instagram!'
+        fallback: usage('.insta <link>', null, 'Envie o link do post, reel ou story.')
       });
 
     case 'yt':
@@ -732,7 +734,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       return downloadCommand({
         sock, msg, args, ctx,
         url: pickUrl(args),
-        fallback: '▶️ Manda o link do YouTube!'
+        fallback: usage('.yt <link>', null, 'Envie o link do vídeo do YouTube.')
       });
 
     case 'ytmp3':
@@ -743,7 +745,7 @@ async function runCommand(sock, msg, cmd, ctx) {
         sock, msg, args, ctx,
         url: pickUrl(args),
         audioOnly: true,
-        fallback: '🎶 Manda o link do YouTube (ou de qualquer rede)!'
+        fallback: usage('.ytmp3 <link>', null, 'Envie o link do YouTube (ou de qualquer rede) para receber só o áudio.')
       });
 
     case 'tw':
@@ -753,7 +755,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       return downloadCommand({
         sock, msg, args, ctx,
         url: pickUrl(args),
-        fallback: '𝕏 Manda o link do tweet!'
+        fallback: usage('.tw <link>', null, 'Envie o link do post no X/Twitter.')
       });
 
     case 'face':
@@ -762,7 +764,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       return downloadCommand({
         sock, msg, args, ctx,
         url: pickUrl(args),
-        fallback: '👥 Manda o link do Facebook!'
+        fallback: usage('.face <link>', null, 'Envie o link do vídeo do Facebook.')
       });
 
     // ── CONFIGURAÇÃO ────────────────────────────────────
@@ -771,21 +773,23 @@ async function runCommand(sock, msg, cmd, ctx) {
       if (!args.length) {
         const c = cfg.get();
         return reply(
-          [
-            '⚙️ *CONFIGURAÇÃO ATUAL*',
-            '',
-            '🔒 Acesso: total no privado do dono; liberado só nos chats ativados',
-            `chats ativados: ${c.autorizados?.length || 0} (${(c.autorizados || []).join(', ') || 'ninguém'})`,
-            '🚫 Nunca visível para terceiros: View Once e Anti-Delete',
-            `autoDownload: ${c.autoDownload}`,
-            `qualidadePadrao: ${c.qualidadePadrao}`,
-            `maxMB: ${c.maxMB}`,
-            `viewOnce: auto=${c.viewOnce.auto} (silencioso só pro dono)`,
-            `antiDelete: ativo=${c.antiDelete.ativo} (silencioso só pro dono) ignorar=[${c.antiDelete.ignorar.join(', ')}]`,
-            '',
-            'Mude com `.config <chave> <valor>`',
-            'Ex.: `.config autoDownload false`'
-          ].join('\n')
+          card([
+            header('Configuração', 'ajustes atuais'),
+            [
+              `${SYM.section} *GERAL*`,
+              kv('Chats liberados', `${c.autorizados?.length || 0}${c.autorizados?.length ? ` (${c.autorizados.join(', ')})` : ''}`),
+              kv('Download automático', toggle(c.autoDownload, 'ligado', 'desligado')),
+              kv('Qualidade padrão', c.qualidadePadrao),
+              kv('Tamanho máximo', `${c.maxMB} MB`)
+            ].join('\n'),
+            [
+              `${SYM.section} *PRIVADO DO DONO*`,
+              kv('View Once automático', toggle(c.viewOnce.auto, 'ligado', 'desligado')),
+              kv('Anti-Delete', toggle(c.antiDelete.ativo, 'ativo', 'desativado')),
+              kv('Filtros do Anti-Delete', c.antiDelete.ignorar.length ? c.antiDelete.ignorar.join(', ') : 'nenhum')
+            ].join('\n'),
+            usage('.config <chave> <valor>', '.config autoDownload false')
+          ])
         );
       }
       const [key, ...restArr] = args;
@@ -796,27 +800,28 @@ async function runCommand(sock, msg, cmd, ctx) {
         maxmb: ['maxMB', (v) => Number(v) || 90]
       };
       const entry = map[key.toLowerCase()];
-      if (!entry) throw new Error('chaves: autoDownload, qualidadePadrao, maxMB');
+      if (!entry) throw new Error('chaves válidas: autoDownload, qualidadePadrao, maxMB');
       cfg.set(entry[0], entry[1](valueRaw.toLowerCase()));
-      return reply(`⚙️ ${entry[0]} = ${cfg.get()[entry[0]]} ✅`);
+      return reply(ok('Ajuste salvo', `${entry[0]} = ${cfg.get()[entry[0]]}`));
     }
 
     case 'pools': {
       requireOwner(ctx, msg);
-      const lines = ['🔑 *POOLS DE APIS*', ''];
+      const lines = [header('Pools de APIs', 'chaves e provedores'), ''];
       const { removebg, endpoints } = bgPools();
       lines.push(
-        '🎭 remove.bg',
-        ...removebg.summary().map((s) => '  ' + s),
-        '🎭 endpoints',
-        ...endpoints.summary().map((s) => '  ' + s)
+        `${SYM.section} *REMOVE.BG*`,
+        ...removebg.summary().map((s) => ` ${SYM.detail} ${s}`),
+        '',
+        `${SYM.section} *ENDPOINTS*`,
+        ...endpoints.summary().map((s) => ` ${SYM.detail} ${s}`)
       );
       return reply(lines.join('\n'));
     }
 
     default:
       if (inOwnerPrivate && cfg.get().responderDesconhecido) {
-        return reply(`🤔 Não conheço .${name}. Digita .menu pra ver tudo que eu faço!`);
+        return reply(warn('Comando não reconhecido', `.${name}  ·  digite .menu para ver as opções`));
       }
       return;
   }
@@ -839,10 +844,10 @@ async function downloadCommand({ sock, msg, args, ctx, url, audioOnly = false, f
     log.warn(`download falhou (${url.slice(0, 60)}): ${error.message}`);
     const detail = String(error.message || error).slice(0, 260);
     return reply(
-      '😕 Não consegui baixar esse link.\n\n' +
-        `Motivo: ${detail}\n\n` +
-        'Tenta de novo em alguns minutos, manda o link direto do app ' +
-        '(compartilhar → copiar link) ou usa `.dl <link> baixa`.'
+      fail('Não consegui baixar este link', detail) +
+        '\n\n' +
+        `${SYM.item} Tente novamente em instantes, envie o link direto do app\n` +
+        `${SYM.item} Ou use \`.dl <link> baixa\``
     );
   }
 }
@@ -857,54 +862,59 @@ async function antiDeleteCommand(sock, msg, args, ctx) {
   if (!sub) return reply(statusText(jid));
 
   if (['on', 'off'].includes(sub)) {
-    if (!owner) throw new Error('só o dono liga/desliga 👑');
+    if (!owner) throw new Error('somente o dono pode ligar ou desligar');
     settings.ativo = sub === 'on';
     cfg.save();
-    return reply(`🛡️ Anti-delete ${settings.ativo ? 'ATIVADO ✅ (100% silencioso no seu privado)' : 'desativado ⚠️'}`);
+    return reply(settings.ativo ? ok('Anti-Delete ativado', 'silencioso, chega só no seu privado') : warn('Anti-Delete desativado'));
   }
 
   if (sub === 'lista') {
     return reply(
-      `🛡️ *Filtros de ignorar:*\n${settings.ignorar.length ? settings.ignorar.map((r) => `• ${r}`).join('\n') : '• nenhum (monitorando tudo)'}`
+      section('Filtros do Anti-Delete', settings.ignorar.length ? settings.ignorar : ['nenhum, monitorando tudo'])
     );
   }
 
   if (['ignorar', 'add', 'addignorar'].includes(sub)) {
-    if (!owner) throw new Error('só o dono muda filtros 👑');
+    if (!owner) throw new Error('somente o dono pode alterar filtros');
     const target = normalizeIgnoreTarget(restArr.join(' '), msg);
-    if (settings.ignorar.includes(target)) return reply('ℹ️ Esse filtro já existe!');
+    if (settings.ignorar.includes(target)) return reply(warn('Esse filtro já existe', target));
     settings.ignorar.push(target);
     cfg.save();
-    return reply(`🛡️ Ignorando agora: *${target}* ✅\nUse .antidelete remover ${target} para voltar.`);
+    return reply(ok('Filtro adicionado', `ignorando ${target}  ·  para voltar: .antidelete remover ${target}`));
   }
 
   if (['remover', 'rm', 'tirar', 'parar'].includes(sub)) {
-    if (!owner) throw new Error('só o dono muda filtros 👑');
+    if (!owner) throw new Error('somente o dono pode alterar filtros');
     const target = normalizeIgnoreTarget(restArr.join(' '), msg);
     settings.ignorar = settings.ignorar.filter((r) => r !== target);
     cfg.save();
-    return reply(`🛡️ Filtro removido: *${target}* — monitorado de novo ✅`);
+    return reply(ok('Filtro removido', `${target} volta a ser monitorado`));
   }
 
   return reply(antiDeleteMenu());
 }
 
 function doctorText() {
-  const lines = [
-    '🩺 *DOCTOR NEXUS*',
-    '',
-    `Node: ${process.version} ${Number(process.versions.node.split('.')[0]) >= 20 ? '✅' : '⚠️ use 20+'}`,
-    `FFmpeg: ${hasFfmpeg() ? '✅ instalado' : '❌ ausente — figurinhas precisam dele'}`,
-    `yt-dlp: ${hasYtDlp() ? '✅ instalado (modo turbo dos downloads)' : '— opcional (pip install -U yt-dlp)'}`,
-    `Plataforma: ${process.platform}`,
-    `Memória: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`,
-    '',
-    '🎭 Fundo: ' + bgStatus().join(' · '),
-    '🧠 IA: ' + aiStatus().join(' · '),
-    '',
-    `🌐 Cobalt: ${cobaltPool().available}/${cobaltPool().size} instâncias saudáveis`,
-    '',
-    !hasFfmpeg() ? 'Instale FFmpeg: pkg install ffmpeg (Termux) / apt install ffmpeg' : '✅ Tudo certo por aqui!'
-  ];
-  return lines.join('\n');
+  const nodeOk = Number(process.versions.node.split('.')[0]) >= 20;
+  const ff = hasFfmpeg();
+  const yt = hasYtDlp();
+  const cb = cobaltPool();
+  return card([
+    header('Diagnóstico', 'saúde do sistema'),
+    [
+      `${SYM.section} *AMBIENTE*`,
+      kv('Node', `${process.version} ${nodeOk ? SYM.ok : `${SYM.warn} use 20+`}`),
+      kv('FFmpeg', ff ? `${SYM.ok} instalado` : `${SYM.err} ausente (figurinhas precisam dele)`),
+      kv('yt-dlp', yt ? `${SYM.ok} instalado (modo turbo)` : 'opcional'),
+      kv('Plataforma', process.platform),
+      kv('Memória', `${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`)
+    ].join('\n'),
+    [
+      `${SYM.section} *SERVIÇOS*`,
+      kv('Remoção de fundo', bgStatus().join(' · ')),
+      kv('IA', aiStatus().join(' · ')),
+      kv('Cobalt', `${cb.available}/${cb.size} instâncias saudáveis`)
+    ].join('\n'),
+    ff ? ok('Tudo certo por aqui') : warn('Instale o FFmpeg', 'Termux: pkg install ffmpeg  ·  Linux: apt install ffmpeg')
+  ]);
 }
