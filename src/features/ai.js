@@ -5,9 +5,9 @@
 //   GROQ_KEYS              → Groq (grátis e rápido)
 //   OPENAI_KEYS            → OpenAI
 //   GEMINI_KEYS            → Google Gemini
-//   (fallback grátis)      → Pollinations, sem chave nenhuma
+//   POLLINATIONS_KEYS      → Pollinations (chave grátis em enter.pollinations.ai)
 //
-// Imagem e voz: Pollinations (grátis, sem chave).
+// Imagem e voz: Pollinations (precisa de chave desde que migrou para gen.pollinations.ai).
 
 import { KeyPool } from '../core/keypool.js';
 import { ENV, cfg } from '../core/config.js';
@@ -19,10 +19,18 @@ const pools = {
   ai: new KeyPool('ai-custom', ENV.aiKeys, { cooldownMs: 10 * 60_000 }),
   groq: new KeyPool('groq', ENV.groqKeys, { cooldownMs: 5 * 60_000 }),
   openai: new KeyPool('openai', ENV.openaiKeys, { cooldownMs: 10 * 60_000 }),
-  gemini: new KeyPool('gemini', ENV.geminiKeys, { cooldownMs: 5 * 60_000 })
+  gemini: new KeyPool('gemini', ENV.geminiKeys, { cooldownMs: 5 * 60_000 }),
+  pollinations: new KeyPool('pollinations', ENV.pollinationsKeys, { cooldownMs: 5 * 60_000 })
 };
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+// Tenta modelos em ordem; 404/400 passa para o próximo. Fixe com GEMINI_MODEL.
+const GEMINI_MODELS = ENV.geminiModels.length
+  ? ENV.geminiModels
+  : ['gemini-flash-latest', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+const POLLI_GEN = 'https://gen.pollinations.ai';
+const NO_PROVIDER_HELP =
+  'Nenhuma IA configurada. Crie uma chave GRÁTIS em aistudio.google.com (Gemini) ou console.groq.com ' +
+  'e coloque GEMINI_KEYS=... ou GROQ_KEYS=... no arquivo .env (depois reinicie o bot).';
 
 // Memória curta por chat para .ia
 const memory = new Map(); // jid -> { turns: [], ts }
@@ -61,31 +69,33 @@ async function geminiCall(key, messages) {
     .map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   const body = { contents };
   if (system) body.systemInstruction = { parts: [{ text: system }] };
-  const data = await postJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
-    body,
-    { timeoutMs: 90_000 }
-  );
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('');
-  if (!text) throw new Error('resposta vazia do gemini');
-  return text.trim();
+  let lastError;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const data = await postJson(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        body,
+        { headers: { 'x-goog-api-key': key }, timeoutMs: 90_000 }
+      );
+      const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('');
+      if (!text) throw new Error(`resposta vazia do gemini (${model})`);
+      return text.trim();
+    } catch (error) {
+      lastError = error;
+      if (error?.status !== 404 && error?.status !== 400) throw error;
+    }
+  }
+  throw lastError;
 }
 
 async function pollinationsText(messages) {
-  // Pollinations é compatível com OpenAI e funciona sem chave.
-  try {
-    return await openAICompat('https://text.pollinations.ai/openai', '', 'openai', messages);
-  } catch (error) {
-    // fallback GET simples
-    const user = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-    const system = messages.find((m) => m.role === 'system')?.content || '';
-    const url =
-      `https://text.pollinations.ai/${encodeURIComponent(user)}?model=openai` +
-      (system ? `&system=${encodeURIComponent(system)}` : '');
-    const text = await fetchText(url, { timeoutMs: 90_000 });
-    if (!text || text.length < 2) throw new Error('pollinations vazio');
-    return text.trim();
+  if (pools.pollinations.size) {
+    return pools.pollinations.run((key) =>
+      openAICompat(`${POLLI_GEN}/v1`, key, ENV.pollinationsModel, messages)
+    );
   }
+  // Endpoint antigo como última tentativa (hoje costuma responder 402).
+  return openAICompat('https://text.pollinations.ai/openai', '', 'openai', messages);
 }
 
 /** Chat com fallback em cascata por todos os pools. */
@@ -99,7 +109,7 @@ export async function aiChat(jid, userText) {
   const model = ENV.aiModel || 'gpt-4o-mini';
 
   if (pools.ai.size) attempts.push(() => pools.ai.run((key) => openAICompat(ENV.aiBase || ENV.openaiBase, key, ENV.aiModel || model, messages)));
-  if (pools.groq.size) attempts.push(() => pools.groq.run((key) => openAICompat('https://api.groq.com/openai/v1', key, 'llama-3.3-70b-versatile', messages)));
+  if (pools.groq.size) attempts.push(() => pools.groq.run((key) => openAICompat('https://api.groq.com/openai/v1', key, ENV.groqModel, messages)));
   if (pools.openai.size) attempts.push(() => pools.openai.run((key) => openAICompat('https://api.openai.com/v1', key, model, messages)));
   if (pools.gemini.size) attempts.push(() => pools.gemini.run((key) => geminiCall(key, messages)));
   attempts.push(() => pollinationsText(messages));
@@ -117,18 +127,33 @@ export async function aiChat(jid, userText) {
       await sleep(300);
     }
   }
-  throw new Error(`Todos os provedores de IA falharam: ${errors.join(' | ').slice(0, 300)}`);
+  const hasKeys = pools.ai.size || pools.groq.size || pools.openai.size || pools.gemini.size || pools.pollinations.size;
+  throw new Error((hasKeys ? 'Todos os provedores de IA falharam' : NO_PROVIDER_HELP) + `: ${errors.join(' | ').slice(0, 300)}`);
 }
 
 // ── Geração de imagem (Pollinations) ───────────────────────
 export async function aiImage(prompt, { width = 1024, height = 1024, model } = {}) {
   const m = model || cfg.get().ia.modeloImagem || 'flux';
   const seed = Math.floor(Math.random() * 1_000_000_000);
-  const url =
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    `?width=${width}&height=${height}&seed=${seed}&model=${m}&nologo=true&safe=true&referrer=nexusbot`;
+  const qs = `width=${width}&height=${height}&seed=${seed}&model=${m}&nologo=true&safe=true`;
   log.ai(`gerando imagem: "${prompt.slice(0, 60)}"`);
-  const buffer = await fetchBuffer(url, { timeoutMs: 180_000, maxBytes: 40 * 1024 * 1024 });
+  let buffer;
+  if (pools.pollinations.size) {
+    buffer = await pools.pollinations.run((key) =>
+      fetchBuffer(`${POLLI_GEN}/image/${encodeURIComponent(prompt)}?${qs}&key=${encodeURIComponent(key)}`, {
+        timeoutMs: 180_000, maxBytes: 40 * 1024 * 1024
+      })
+    );
+  } else {
+    try {
+      buffer = await fetchBuffer(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${qs}&referrer=nexusbot`, {
+        timeoutMs: 180_000, maxBytes: 40 * 1024 * 1024
+      });
+    } catch (error) {
+      throw new Error('Geração de imagem precisa de uma chave grátis do Pollinations: crie em enter.pollinations.ai e ' +
+        `coloque POLLINATIONS_KEYS=... no .env (${String(error.message).slice(0, 80)})`);
+    }
+  }
   if (buffer.length < 1024) throw new Error('imagem gerada vazia');
   return buffer;
 }
@@ -136,8 +161,23 @@ export async function aiImage(prompt, { width = 1024, height = 1024, model } = {
 // ── Voz (Pollinations audio) ───────────────────────────────
 export async function aiVoice(text, voice) {
   const v = voice || cfg.get().ia.vozPadrao || 'nova';
-  const url = `https://text.pollinations.ai/${encodeURIComponent(text)}?model=openai-audio&voice=${v}`;
-  const buffer = await fetchBuffer(url, { timeoutMs: 120_000, maxBytes: 25 * 1024 * 1024 });
+  let buffer;
+  if (pools.pollinations.size) {
+    buffer = await pools.pollinations.run((key) =>
+      fetchBuffer(`${POLLI_GEN}/audio/${encodeURIComponent(text)}?voice=${v}&key=${encodeURIComponent(key)}`, {
+        timeoutMs: 120_000, maxBytes: 25 * 1024 * 1024
+      })
+    );
+  } else {
+    try {
+      buffer = await fetchBuffer(`https://text.pollinations.ai/${encodeURIComponent(text)}?model=openai-audio&voice=${v}`, {
+        timeoutMs: 120_000, maxBytes: 25 * 1024 * 1024
+      });
+    } catch (error) {
+      throw new Error('Voz precisa de uma chave grátis do Pollinations: crie em enter.pollinations.ai e ' +
+        `coloque POLLINATIONS_KEYS=... no .env (${String(error.message).slice(0, 80)})`);
+    }
+  }
   if (buffer.length < 2048) throw new Error('áudio vazio');
   return buffer;
 }
@@ -160,7 +200,7 @@ async function aiChatRaw(prompt) {
   const messages = [{ role: 'user', content: prompt }];
   const attempts = [];
   if (pools.ai.size) attempts.push(() => pools.ai.run((key) => openAICompat(ENV.aiBase || ENV.openaiBase, key, ENV.aiModel || 'gpt-4o-mini', messages)));
-  if (pools.groq.size) attempts.push(() => pools.groq.run((key) => openAICompat('https://api.groq.com/openai/v1', key, 'llama-3.3-70b-versatile', messages)));
+  if (pools.groq.size) attempts.push(() => pools.groq.run((key) => openAICompat('https://api.groq.com/openai/v1', key, ENV.groqModel, messages)));
   if (pools.openai.size) attempts.push(() => pools.openai.run((key) => openAICompat('https://api.openai.com/v1', key, 'gpt-4o-mini', messages)));
   if (pools.gemini.size) attempts.push(() => pools.gemini.run((key) => geminiCall(key, messages)));
   attempts.push(() => pollinationsText(messages));
@@ -172,7 +212,8 @@ async function aiChatRaw(prompt) {
       errors.push(String(error.message || error).slice(0, 80));
     }
   }
-  throw new Error(`IA indisponível: ${errors.join(' | ').slice(0, 200)}`);
+  const hasKeys = pools.ai.size || pools.groq.size || pools.openai.size || pools.gemini.size || pools.pollinations.size;
+  throw new Error(`${hasKeys ? 'IA indisponível' : NO_PROVIDER_HELP}: ${errors.join(' | ').slice(0, 200)}`);
 }
 
 export function aiStatus() {
@@ -180,6 +221,6 @@ export function aiStatus() {
   for (const [name, pool] of Object.entries(pools)) {
     rows.push(pool.size ? `${name}: ${pool.available}/${pool.size} chaves` : null);
   }
-  rows.push('pollinations: grátis ✅');
+  if (!rows.some(Boolean)) rows.push('⚠️ nenhuma chave de IA — configure GEMINI_KEYS ou GROQ_KEYS no .env');
   return rows.filter(Boolean);
 }

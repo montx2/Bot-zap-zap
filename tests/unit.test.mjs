@@ -245,3 +245,30 @@ test('injeta EXIF em webp sintético (VP8L e VP8) com cabeçalho TIFF de 22 byte
   assert.equal(readStickerExif(stickerBuf).pack, 'MeuPack');
   assert.equal(readStickerExif(stickerBuf).author, 'MeuAutor');
 });
+
+// Regressão: EXIF válido e VP8 puro sem VP8X.
+test('EXIF de figurinha tem cabeçalho de 22 bytes com offset 0x16', () => {
+  const ex = makeStickerExif({ pack: 'P', author: 'A' });
+  assert.equal(ex.readUInt32LE(18), 0x16);
+  assert.equal(ex.readUInt32LE(14), ex.length - 22);
+  assert.equal(JSON.parse(ex.subarray(22).toString())['sticker-pack-name'], 'P');
+});
+test('setWebpExif cria VP8X quando o webp é VP8 puro', () => {
+  const vp8data = Buffer.alloc(20);
+  vp8data.set([0x9d, 0x01, 0x2a], 3);
+  vp8data.writeUInt16LE(512, 6);
+  vp8data.writeUInt16LE(300, 8);
+  const riffChunk = Buffer.concat([Buffer.from('VP8 '), Buffer.from([20, 0, 0, 0]), vp8data]);
+  const body = Buffer.concat([Buffer.from('WEBP'), riffChunk]);
+  const head = Buffer.alloc(8);
+  head.write('RIFF');
+  head.writeUInt32LE(body.length, 4);
+  const out = setWebpExif(Buffer.concat([head, body]), makeStickerExif({ pack: 'x' }));
+  const chunks = readChunks(out);
+  assert.equal(chunks[0].type, 'VP8X');
+  assert.ok(chunks[0].data[0] & 0x08);
+  assert.equal(chunks[0].data.readUIntLE(4, 3) + 1, 512);
+  assert.equal(chunks[0].data.readUIntLE(7, 3) + 1, 300);
+  assert.ok(chunks.some((c) => c.type === 'EXIF'));
+  assert.ok(isWebp(out));
+});
