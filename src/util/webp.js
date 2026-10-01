@@ -67,17 +67,47 @@ export function makeStickerExif({ pack = '', author = '', emojis = [], id = '' }
     emojis: emojis.length ? emojis : undefined
   });
   const jsonBuf = Buffer.from(json, 'utf8');
-  const head = Buffer.alloc(8);
-  head.writeUInt32LE(jsonBuf.length + 4, 0); // pouco uso, mantido p/ compat
-  head.write('exif', 4, 'ascii');
-  return Buffer.concat([Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00]),
-    Buffer.from([jsonBuf.length & 0xff, (jsonBuf.length >> 8) & 0xff, 0x00, 0x00]),
-    jsonBuf]);
+  // TIFF little-endian, tag 0x5741, JSON no offset 0x16.
+  const header = Buffer.from([
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x16, 0x00, 0x00, 0x00
+  ]);
+  header.writeUInt32LE(jsonBuf.length, 14);
+  return Buffer.concat([header, jsonBuf]);
+}
+
+/** Garante VP8X, obrigatória para EXIF em imagens VP8/VP8L simples. */
+function ensureVp8x(chunks) {
+  if (chunks.some((c) => c.type === 'VP8X')) return;
+  const hasAlph = chunks.some((c) => c.type === 'ALPH');
+  const vp8 = chunks.find((c) => c.type === 'VP8 ');
+  const vp8l = chunks.find((c) => c.type === 'VP8L');
+  let width;
+  let height;
+  let alpha = hasAlph;
+  if (vp8 && vp8.data.length >= 10 && vp8.data[3] === 0x9d && vp8.data[4] === 0x01 && vp8.data[5] === 0x2a) {
+    width = vp8.data.readUInt16LE(6) & 0x3fff;
+    height = vp8.data.readUInt16LE(8) & 0x3fff;
+  } else if (vp8l && vp8l.data.length >= 5 && vp8l.data[0] === 0x2f) {
+    const bits = vp8l.data.readUInt32LE(1);
+    width = (bits & 0x3fff) + 1;
+    height = ((bits >>> 14) & 0x3fff) + 1;
+    alpha = alpha || ((bits >>> 28) & 1) === 1;
+  } else {
+    throw new Error('webp sem VP8/VP8L reconhecível');
+  }
+  const data = Buffer.alloc(10);
+  data[0] = alpha ? VP8X_ALPHA : 0;
+  data.writeUIntLE(width - 1, 4, 3);
+  data.writeUIntLE(height - 1, 7, 3);
+  chunks.unshift({ type: 'VP8X', data });
 }
 
 /** Injeta/substitui a chunk EXIF de um WebP. */
 export function setWebpExif(buf, exif) {
   const chunks = readChunks(buf).filter((c) => c.type !== 'EXIF');
+  ensureVp8x(chunks);
   const vp8x = chunks.find((c) => c.type === 'VP8X');
   if (vp8x && vp8x.data.length >= 1) {
     vp8x.data = Buffer.from(vp8x.data);

@@ -130,7 +130,7 @@ REMOVE_BG_URLS=https://sua-api-própria/removebg   # POST multipart campo "image
 LOCAL_REMBG=true                                   # usa o rembg local (pip install rembg)
 ```
 
-### 🧠 IA (opcional — sem nada, usa Pollinations grátis)
+### 🧠 IA (precisa de pelo menos 1 chave grátis)
 ```env
 GEMINI_KEYS=key1,key2        # aistudio.google.com (grátis)
 GROQ_KEYS=key1               # console.groq.com (grátis, rápido)
@@ -139,7 +139,9 @@ AI_BASE_URL=https://openrouter.ai/api/v1   # qualquer API compatível com OpenAI
 AI_KEYS=key1,key2
 AI_MODEL=anthropic/claude-3.5-sonnet
 ```
-Ordem de uso: suas chaves → Gemini → Groq → OpenAI → **Pollinations (grátis, sempre)**.
+Sem nenhuma chave a IA **não responde** (o Pollinations sem chave passou a dar erro 402).
+O caminho mais simples: chave grátis do Gemini em <https://aistudio.google.com/apikey> → `GEMINI_KEYS=...`.
+Para `.criar` (imagem) e `.voz`, crie uma chave grátis em <https://enter.pollinations.ai> → `POLLINATIONS_KEYS=...`.
 
 ### ⬇️ Downloads universais (Cobalt)
 O bot já vem com instâncias públicas. Para ficar 100% confiável, adicione as suas

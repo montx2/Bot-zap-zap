@@ -78,17 +78,28 @@ export async function toStickerWebp(input, { animated = false, maxSeconds = 9, e
     const vf =
       'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,' +
       'pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000';
-    const args = ['-y', '-i', inFile];
-    if (animated) {
-      args.push('-t', String(maxSeconds), '-vf', `${vf},fps=15`, '-loop', '0', '-preset', 'default', '-an', '-vsync', 'vfr');
-    } else {
-      args.push('-vf', vf);
+    if (!animated) {
+      // Encoder estático: impede WebP animado de um único quadro.
+      await runFfmpeg(['-y', '-i', inFile, '-frames:v', '1', '-an', '-vf', vf, '-c:v', 'libwebp',
+        '-lossless', '0', '-compression_level', '4', '-quality', '75', outFile]);
+      const buffer = fs.readFileSync(outFile);
+      if (!buffer.length) throw new Error('ffmpeg não gerou saída');
+      return { buffer, animated: false };
     }
-    args.push('-lossless', '0', '-compression_level', '4', '-quality', '75', outFile);
-    await runFfmpeg(args);
-    const buffer = fs.readFileSync(outFile);
-    if (!buffer.length) throw new Error('ffmpeg não gerou saída');
-    return { buffer, animated };
+    const tries = [
+      { q: 60, fps: 15, t: maxSeconds },
+      { q: 45, fps: 12, t: Math.min(maxSeconds, 7) },
+      { q: 30, fps: 10, t: Math.min(maxSeconds, 6) }
+    ];
+    let buffer;
+    for (const { q, fps, t } of tries) {
+      await runFfmpeg(['-y', '-i', inFile, '-t', String(t), '-an', '-vf', `${vf},fps=${fps}`,
+        '-loop', '0', '-lossless', '0', '-compression_level', '4', '-quality', String(q), outFile]);
+      buffer = fs.readFileSync(outFile);
+      if (buffer.length && buffer.length <= 500 * 1024) break;
+    }
+    if (!buffer?.length) throw new Error('ffmpeg não gerou saída');
+    return { buffer, animated: true };
   } finally {
     fs.rmSync(inFile, { force: true });
     fs.rmSync(outFile, { force: true });
