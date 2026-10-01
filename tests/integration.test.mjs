@@ -28,9 +28,10 @@ function makeSock() {
   };
 }
 
-function makeDeps(sock) {
+function makeDeps(sock, type) {
   const ownerJid = '5511900000000@s.whatsapp.net';
   return {
+    type,
     ownerJid,
     isOwner: (jid, participant) => [jid, participant].includes(ownerJid) || jid === sock.user.id,
     sendOwner: async () => {}
@@ -210,4 +211,73 @@ test('comando desconhecido não responde por padrão', async () => {
   const sock = makeSock();
   await handleMessage(sock, textMsg('5510@s.whatsapp.net', '.xyzzy'), makeDeps(sock));
   assert.equal(sock.sent.length, 0);
+});
+
+// Regressão do patch: o revoke reaproveita a key da mensagem ORIGINAL (formato do
+// messages.update em src/wa/client.js, e também o do upsert no WhatsApp atual). Como
+// a original já passou pelo router, o dedupe por id engoliria o revoke e mataria o
+// anti-delete — por isso o router isenta revokes do alreadySeen().
+test('anti-delete: revoke com a MESMA key da original (upsert) ainda restaura', async () => {
+  const sock = makeSock();
+  const chat = '5560@s.whatsapp.net';
+  const keyOfOriginal = { remoteJid: chat, id: 'REVUPD1', fromMe: false };
+
+  await handleMessage(
+    sock,
+    { key: { ...keyOfOriginal }, pushName: 'Fofoqueiro', messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'segredo' } },
+    makeDeps(sock, 'notify')
+  );
+
+  await handleMessage(
+    sock,
+    { key: { ...keyOfOriginal }, messageTimestamp: Date.now() / 1000, message: { protocolMessage: { type: 0, key: { ...keyOfOriginal } } } },
+    makeDeps(sock, 'notify')
+  );
+
+  const restored = sock.sent.find((s) => JSON.stringify(s.content).includes('ANTI-DELETE'));
+  assert.ok(restored, 'anti-delete deve restaurar mesmo com a key repetida');
+  assert.equal(restored.jid, chat);
+});
+
+test('anti-delete: revoke via messages.update (type update) ainda restaura', async () => {
+  const sock = makeSock();
+  const chat = '5563@s.whatsapp.net';
+  const keyOfOriginal = { remoteJid: chat, id: 'REVUPD2', fromMe: false };
+
+  await handleMessage(
+    sock,
+    { key: { ...keyOfOriginal }, pushName: 'Fofoqueiro', messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'segredo 2' } },
+    makeDeps(sock, 'notify')
+  );
+  await handleMessage(
+    sock,
+    { key: { ...keyOfOriginal }, messageTimestamp: Date.now() / 1000, message: { protocolMessage: { type: 0, key: { ...keyOfOriginal } } } },
+    makeDeps(sock, 'update')
+  );
+
+  const restored = sock.sent.find((s) => JSON.stringify(s.content).includes('ANTI-DELETE'));
+  assert.ok(restored, 'anti-delete deve restaurar o revoke vindo de messages.update');
+  assert.equal(restored.jid, chat);
+});
+
+// Regressão: backlog (append) não age, mas continua indo para o cache do anti-delete.
+test('backlog (append) não executa comando nem responde, mas fica no cache', async () => {
+  const sock = makeSock();
+  const chat = '5561@s.whatsapp.net';
+  const msg = textMsg(chat, '.menu', { id: 'APPEND1' });
+  await handleMessage(sock, msg, makeDeps(sock, 'append'));
+
+  assert.equal(sock.sent.length, 0, 'mensagem de histórico não deve disparar resposta');
+  assert.ok(messageCache.get(chat, 'APPEND1'), 'mensagem antiga deve ficar no cache do anti-delete');
+});
+
+// Regressão: reentrega ao vivo (mesma msg, type notify) é descartada.
+test('reentrega da mesma mensagem ao vivo não responde duas vezes', async () => {
+  const sock = makeSock();
+  const chat = '5562@s.whatsapp.net';
+  const msg = textMsg(chat, '.ping', { id: 'DUP1' });
+  await handleMessage(sock, msg, makeDeps(sock, 'notify'));
+  const afterFirst = sock.sent.length;
+  await handleMessage(sock, msg, makeDeps(sock, 'notify'));
+  assert.equal(sock.sent.length, afterFirst, 'segunda entrega não deve gerar nova resposta');
 });

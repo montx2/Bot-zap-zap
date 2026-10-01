@@ -19,6 +19,12 @@ const STARTED_AT = Date.now();
 
 export { isViewOnce, unwrapViewOnce };
 
+/** Revoke = protocolMessage de apagar para todos (upsert ou messages.update). */
+function isRevokeMessage(msg) {
+  const proto = msg?.message?.protocolMessage;
+  return !!proto && (proto.type === 0 || proto.type === 'REVOKE');
+}
+
 let staleCount = 0;
 let staleTimer = null;
 function noteStale() {
@@ -45,14 +51,17 @@ export async function handleMessage(sock, msg, deps) {
 
   // 0.1) Backlog/histórico/reentrega: guarda no cache mas NÃO age (senão o bot
   // responde e reenvia dezenas de mensagens antigas toda vez que reconecta).
-  if (isStale(msg, deps.type) || alreadySeen(msg)) {
+  // Revoke fica fora do dedupe: ele reaproveita a key da mensagem original (que o
+  // bot já viu quando ela chegou ao vivo), então deduplicar por id mataria o
+  // anti-delete. A regra de antiguidade continua valendo para ele.
+  const revoke = isRevokeMessage(msg);
+  if (isStale(msg, deps.type) || (!revoke && alreadySeen(msg))) {
     noteStale();
     return;
   }
 
   // 1) Mensagem apagada (REVOKE)
-  const proto = msg.message.protocolMessage;
-  if (proto && (proto.type === 0 || proto.type === 'REVOKE')) {
+  if (revoke) {
     await handleDelete(sock, msg, { ownerJid }).catch((e) => log.warn(`antidelete: ${e.message}`));
     return;
   }

@@ -29,6 +29,8 @@ export function isStale(msg, type, { now = Date.now(), boot = BOOT_TS } = {}) {
 }
 
 // Evita processar duas vezes a mesma mensagem (reentrega ao reconectar).
+// Atenção: revokes reaproveitam a key da mensagem original e por isso NÃO passam
+// por aqui (o router os isenta) — deduplicá-los mataria o anti-delete.
 const seen = new Set();
 export function alreadySeen(msg) {
   const id = msg?.key?.id;
