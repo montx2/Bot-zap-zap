@@ -11,7 +11,18 @@ import { isTikTokUrl } from '../src/features/downloaders/tiktok.js';
 import { isPinterestUrl } from '../src/features/downloaders/pinterest.js';
 import { isInstagramUrl } from '../src/features/downloaders/instagram.js';
 import { extractUrls, isGroup, parseBool } from '../src/util/text.js';
-import { isWebp, makeStickerExif, setWebpExif, readChunks } from '../src/util/webp.js';
+import {
+  isWebp,
+  isAnimatedWebp,
+  makeStickerExif,
+  readStickerExif,
+  setWebpExif,
+  tagSticker,
+  parseWebp,
+  readChunks,
+  buildRiff
+} from '../src/util/webp.js';
+import { makeSticker } from '../src/features/sticker.js';
 import { DEFAULT_CONFIG } from '../src/core/config.js';
 
 // ── KeyPool ──────────────────────────────────────────────────
@@ -128,15 +139,27 @@ test('unwrapViewOnce desembrulha todos os wrappers', () => {
   });
 });
 
-test('unwrapViewOnce retorna null para mensagens comuns', () => {
+test('unwrapViewOnce retorna null para mensagens e mídias comuns (foto, vídeo, áudio normais)', () => {
   assert.equal(unwrapViewOnce({ conversation: 'oi' }), null);
   assert.equal(unwrapViewOnce(null), null);
   assert.equal(isViewOnce({ conversation: 'oi' }), false);
+  // Fotos, vídeos e áudios COMUNS (sem viewOnceMessage* e sem viewOnce: true) NUNCA devem ser tratados como view once
+  assert.equal(unwrapViewOnce({ imageMessage: { url: 'https://mmg.whatsapp.net/foto.jpg' } }), null);
+  assert.equal(unwrapViewOnce({ videoMessage: { url: 'https://mmg.whatsapp.net/video.mp4' } }), null);
+  assert.equal(unwrapViewOnce({ audioMessage: { url: 'https://mmg.whatsapp.net/audio.ogg' } }), null);
+  assert.equal(isViewOnce({ imageMessage: { url: 'https://mmg.whatsapp.net/foto.jpg' } }), false);
+  // Já quando tem viewOnce: true explícito no nó, reconhece como view once
+  assert.ok(unwrapViewOnce({ imageMessage: { url: 'https://mmg.whatsapp.net/vo.jpg', viewOnce: true } }));
 });
 
-test('viewOnce default: auto ativo e resposta para todos', () => {
+test('viewOnce e modoPrivado default: exclusivo no privado do dono', () => {
+  assert.equal(DEFAULT_CONFIG.modoPrivado, true);
+  assert.deepEqual(DEFAULT_CONFIG.autorizados, []);
   assert.equal(DEFAULT_CONFIG.viewOnce.auto, true);
-  assert.equal(DEFAULT_CONFIG.viewOnce.resposta, 'todos');
+  assert.equal(DEFAULT_CONFIG.viewOnce.destinoAuto, 'dono');
+  assert.equal(DEFAULT_CONFIG.viewOnce.resposta, 'dono');
+  assert.equal(DEFAULT_CONFIG.antiDelete.restaurarNoChat, false);
+  assert.equal(DEFAULT_CONFIG.antiDelete.avisarDono, true);
 });
 
 // ── Roteamento de plataformas ────────────────────────────────
@@ -172,22 +195,53 @@ test('isGroup e parseBool', () => {
 });
 
 // ── WebP EXIF ────────────────────────────────────────────────
-test('injeta EXIF em webp sintético', () => {
-  // RIFF/WEBP mínimo com chunk VP8L 1x1
-  const vp8lData = Buffer.from([0x2f, 0x00, 0x00, 0x00, 0x00]);
-  const chunkHead = Buffer.alloc(8);
-  chunkHead.write('VP8L', 0, 'ascii');
-  chunkHead.writeUInt32LE(vp8lData.length, 4);
-  const body = Buffer.concat([Buffer.from('WEBP'), chunkHead, vp8lData, Buffer.alloc(1)]);
-  const head = Buffer.alloc(8);
-  head.write('RIFF', 0, 'ascii');
-  head.writeUInt32LE(body.length, 4);
-  const webp = Buffer.concat([head, body]);
+test('injeta EXIF em webp sintético (VP8L e VP8) com cabeçalho TIFF de 22 bytes e chunk VP8X', async () => {
+  // RIFF/WEBP mínimo com chunk VP8L 512x512 + alpha
+  const vp8lData = Buffer.alloc(5);
+  vp8lData[0] = 0x2f;
+  vp8lData.writeUInt32LE(511 | (511 << 14) | (1 << 28), 1);
+  const webpLossless = buildRiff([{ type: 'VP8L', data: vp8lData }]);
 
-  assert.ok(isWebp(webp));
-  const exif = makeStickerExif({ pack: 'NEXUS ⚡', author: 'teste' });
-  const tagged = setWebpExif(webp, exif);
-  const chunks = readChunks(tagged);
-  assert.ok(chunks.some((c) => c.type === 'EXIF'));
+  assert.ok(isWebp(webpLossless));
+  const exif = makeStickerExif({ pack: 'NEXUS ⚡', author: 'teste', emojis: ['🔥', '⚡'] });
+
+  // Offset TIFF para o JSON deve ser exatamente 22 (0x00000016) nos bytes 18..21
+  assert.equal(exif.readUInt32LE(18), 22);
+  // Tamanho do JSON gravado nos bytes 14..17 deve bater com os bytes seguintes
+  assert.equal(exif.readUInt32LE(14), exif.length - 22);
+
+  const tagged = setWebpExif(webpLossless, exif);
   assert.ok(isWebp(tagged));
+  const chunks = readChunks(tagged);
+  // 1ª chunk DEVE ser VP8X (WebP Extended Format exigido pelo WhatsApp)
+  assert.equal(chunks[0].type, 'VP8X');
+  assert.equal(chunks[0].data.length, 10);
+  // Flags: VP8X_ALPHA (0x10) | VP8X_EXIF (0x08) = 0x18
+  assert.equal(chunks[0].data[0], 0x18);
+  assert.equal(chunks[0].data.readUIntLE(4, 3) + 1, 512);
+  assert.equal(chunks[0].data.readUIntLE(7, 3) + 1, 512);
+  assert.ok(chunks.some((c) => c.type === 'VP8L'));
+  const exifChunk = chunks.find((c) => c.type === 'EXIF');
+  assert.ok(exifChunk);
+  assert.ok(exifChunk.data.toString('utf8').includes('NEXUS'));
+
+  const parsedExif = readStickerExif(tagged);
+  assert.equal(parsedExif.pack, 'NEXUS ⚡');
+  assert.equal(parsedExif.author, 'teste');
+  assert.deepEqual(parsedExif.emojis, ['🔥', '⚡']);
+
+  // Testa também WebP lossy simples (chunk 'VP8 ' sem VP8X inicial, como o FFmpeg gera)
+  const vp8Data = Buffer.from([0x10, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x00, 0x02, 0x00, 0x02, 0x00, 0x00]);
+  const webpLossy = buildRiff([{ type: 'VP8 ', data: vp8Data }]);
+  const stickerBuf = await makeSticker(
+    { buffer: webpLossy, type: 'sticker', node: { mimetype: 'image/webp' } },
+    { pack: 'MeuPack', author: 'MeuAutor' }
+  );
+  const lossyInfo = parseWebp(stickerBuf);
+  assert.equal(lossyInfo.chunks[0].type, 'VP8X');
+  assert.equal(lossyInfo.width, 512);
+  assert.equal(lossyInfo.height, 512);
+  assert.equal(isAnimatedWebp(stickerBuf), false);
+  assert.equal(readStickerExif(stickerBuf).pack, 'MeuPack');
+  assert.equal(readStickerExif(stickerBuf).author, 'MeuAutor');
 });

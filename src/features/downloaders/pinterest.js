@@ -1,82 +1,184 @@
-// 📌 Pinterest — scraper próprio (payload SSR __PWS_DATA) + API pública de fallback.
-// Baixa: imagens em tamanho ORIGINAL, vídeos na melhor qualidade, GIFs.
+// 📌 Pinterest — extração em cascata:
+//   1) Widget API pública (a mesma que o script de incorporação chama):
+//      https://widgets.pinterest.com/v3/pidgets/pins/info/?pin_ids=<id>
+//      → responde o pin como JSON, com todas as rendições de vídeo e imagem.
+//      É o método que os bots reais usam hoje: a página do pin é 1 MB de
+//      markup renderizado por JS e não tem a mídia dentro.
+//   2) Payload SSR `__PWS_DATA__` da página do pin (quando a API falha).
+//   3) savepin.app (scrape) — reserva comunitária.
+//   4) Cobalt.
+//
+// Aceita links curtos pin.it (resolvidos antes de tudo).
 
-import { KeyPool } from '../../core/keypool.js';
-import { fetchText, fetchJson, resolveRedirect, shortUrl } from '../../core/http.js';
+import { httpGet, resolveRedirect, fetchJson } from '../../core/http.js';
 import { log } from '../../core/logger.js';
+import { cobaltDownload } from './cobalt.js';
 
-const FALLBACK_API = 'https://api.bhawanigarg.com/social/pinterest/?url=';
-const fallbackPool = new KeyPool('pin-fallback', [FALLBACK_API], { cooldownMs: 15 * 60_000 });
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
 export function isPinterestUrl(url) {
   return /(pinterest\.[a-z.]+|pin\.it)/i.test(url);
 }
 
-function extractPinId(url) {
-  const m = url.match(/\/pin\/(?:[\w-]+\/)?(\d+)/i) || url.match(/pin\.it\/(\w+)/i);
-  return m ? m[1] : null;
+export function extractPinId(url) {
+  return String(url).match(/\/pin\/(?:[\w-]+\/)?(\d+)/i)?.[1] || String(url).match(/pin\.it\/([\w-]+)/i)?.[1] || null;
 }
 
-function deepFind(obj, key, depth = 0) {
-  if (!obj || depth > 6) return null;
-  if (typeof obj !== 'object') return null;
-  if (obj[key] !== undefined) return obj[key];
-  for (const v of Object.values(obj)) {
-    const found = deepFind(v, key, depth + 1);
-    if (found) return found;
-  }
-  return null;
+function baseResult(extra = {}) {
+  return {
+    platform: 'Pinterest',
+    title: '',
+    author: '',
+    duration: 0,
+    thumbnail: '',
+    kind: 'image',
+    media: [],
+    audioOnly: null,
+    ...extra
+  };
 }
 
-/** Escolhe o melhor vídeo do video_list do Pinterest. */
-function bestVideo(pin, quality) {
-  const list = pin?.videos?.video_list;
-  if (!list) return null;
-  const entries = Object.entries(list)
-    .filter(([, v]) => v?.url)
-    .map(([name, v]) => ({ name, url: v.url, width: v.width || 0, height: v.height || 0 }))
-    .sort((a, b) => b.width * b.height - a.width * a.height);
-  if (!entries.length) return null;
-  if (quality === 'baixa') return entries[entries.length - 1];
-  if (quality === 'media') return entries[Math.min(1, entries.length - 1)];
-  return entries[0]; // melhor/alta
+/** Maior rendição que seja ARQUIVO (ignora manifestos m3u8/mpd). */
+function tallestFile(list) {
+  const files = Object.values(list || {}).filter(
+    (r) => r?.url && !/\.(m3u8|mpd)(\?|$)/i.test(r.url)
+  );
+  if (!files.length) return null;
+  return files.sort((a, b) => (a.height || 0) - (b.height || 0)).pop();
 }
 
-/** Parse do payload SSR da página do pin. */
-function parsePwsData(html) {
-  const m = html.match(/<script id="__PWS_DATA__" type="application\/json">(.*?)<\/script>/s);
-  if (!m) return null;
-  try {
-    return JSON.parse(m[1]);
-  } catch {
-    return null;
-  }
-}
-
-function findPinInPws(pws) {
-  const state = pws?.props?.initialReduxState;
-  if (!state) return null;
-  if (state.pin && (state.pin.images || state.pin.videos)) return state.pin;
-  if (state.pins && typeof state.pins === 'object') {
-    for (const pin of Object.values(state.pins)) {
-      if (pin && (pin.images || pin.videos)) return pin;
+/** Ideia-pin guarda um vídeo por bloco de página; vídeo-pin guarda em `videos`. */
+function bestVideo(pin) {
+  const direct = tallestFile(pin.videos?.video_list);
+  if (direct) return direct;
+  for (const page of pin.story_pin_data?.pages || []) {
+    for (const block of page.blocks || []) {
+      const fromBlock = tallestFile(block.video?.video_list);
+      if (fromBlock) return fromBlock;
     }
   }
   return null;
 }
 
-/** Fallback: extrai URLs de mídia direto do HTML (og: tags e JSON solto). */
-function scrapeHtmlFallback(html) {
+function bestImage(pin) {
+  const images = pin.images || {};
+  if (images.orig?.url) return images.orig;
+  return tallestFile(images);
+}
+
+/** 1) Widget API — o caminho principal. */
+async function viaWidgetApi(pinId) {
+  const res = await httpGet(`https://widgets.pinterest.com/v3/pidgets/pins/info/?pin_ids=${pinId}`, {
+    headers: { 'user-agent': BROWSER_UA, accept: 'application/json' },
+    timeoutMs: 20_000,
+    json: true
+  });
+  if (!res.ok || !res.data) return null;
+  const pin = res.data?.data?.[0] || res.data?.data?.pins?.[0];
+  if (!pin) return null;
+
+  const video = bestVideo(pin);
+  const image = bestImage(pin);
+  if (!video && !image) return null;
+
+  return baseResult({
+    kind: video ? 'video' : /\.gif(\?|$)/i.test(image.url) ? 'gif' : 'image',
+    title: String(pin.grid_title || pin.description || 'Pin do Pinterest').trim().slice(0, 100),
+    author: pin.pinner?.username || '',
+    thumbnail: image?.url || '',
+    media: [
+      video
+        ? { type: 'video', url: video.url, label: `${video.width || ''}x${video.height || ''}`.trim() }
+        : {
+            type: /\.gif(\?|$)/i.test(image.url) ? 'gif' : 'image',
+            url: image.url,
+            label: `${image.width || ''}x${image.height || ''}`.trim()
+          }
+    ]
+  });
+}
+
+/** 2) Payload SSR da página do pin. */
+async function viaPageScrape(finalUrl) {
+  const res = await httpGet(finalUrl, {
+    headers: { 'user-agent': BROWSER_UA, accept: 'text/html,application/xhtml+xml' },
+    timeoutMs: 25_000
+  });
+  if (!res.ok || !res.text) return null;
+  const html = res.text;
+
+  // __PWS_DATA__ (estado Redux server-side renderizado)
+  try {
+    const raw = html.match(/<script id="__PWS_DATA__" type="application\/json">(.*?)<\/script>/s)?.[1];
+    if (raw) {
+      const state = JSON.parse(raw)?.props?.initialReduxState;
+      const pins = state?.pins && typeof state.pins === 'object' ? Object.values(state.pins) : [];
+      const pin = (state?.pin && (state.pin.images || state.pin.videos) && state.pin) ||
+        pins.find((p) => p && (p.images || p.videos));
+      if (pin) {
+        const video = bestVideo(pin);
+        const image = bestImage(pin);
+        if (video || image) {
+          return baseResult({
+            kind: video ? 'video' : /\.gif(\?|$)/i.test(image.url) ? 'gif' : 'image',
+            title: String(pin.title || pin.grid_description || pin.description || '').slice(0, 100),
+            author: pin.pinner?.username || '',
+            thumbnail: image?.url || '',
+            media: [video ? { type: 'video', url: video.url } : { type: 'image', url: image.url }]
+          });
+        }
+      }
+    }
+  } catch { /* segue para as tags og */ }
+
   const ogVideo = html.match(/property="og:video(?::url)?"\s+content="([^"]+)"/)?.[1];
-  if (ogVideo) return [{ type: 'video', url: ogVideo, label: 'og:video', quality: 'media' }];
+  if (ogVideo) return baseResult({ kind: 'video', media: [{ type: 'video', url: ogVideo }], thumbnail: ogVideo });
+
   const ogImage = html.match(/property="og:image"\s+content="([^"]+)"/)?.[1];
-  if (ogImage) return [{ type: 'image', url: ogImage.replace(/\/\d+x\d*\//, '/originals/'), label: 'og:image', quality: 'media' }];
-  // último recurso: procura URL de CDN do pinimg
+  if (ogImage) {
+    const url = ogImage.replace(/\/\d+x\d*\//, '/originals/');
+    return baseResult({ kind: 'image', thumbnail: url, media: [{ type: 'image', url }] });
+  }
+
   const vids = [...html.matchAll(/https:\/\/v1\.pinimg\.com\/videos\/[^"\\\s]+\.mp4/g)].map((m) => m[0]);
-  if (vids.length) return [{ type: 'video', url: vids.sort((a, b) => b.length - a.length)[0], label: 'cdn', quality: 'media' }];
-  const imgs = [...html.matchAll(/https:\/\/i\.pinimg\.com\/originals\/[^"\\\s]+\.(?:jpg|png|gif)/g)].map((m) => m[0]);
-  if (imgs.length) return [{ type: 'image', url: imgs[0], label: 'cdn', quality: 'original' }];
-  return [];
+  if (vids.length) {
+    return baseResult({ kind: 'video', media: [{ type: 'video', url: vids.sort((a, b) => b.length - a.length)[0] }] });
+  }
+  const imgs = [...html.matchAll(/https:\/\/i\.pinimg\.com\/originals\/[^"\\\s]+\.(?:jpg|png|gif)/gi)].map((m) => m[0]);
+  if (imgs.length) {
+    return baseResult({ kind: 'image', thumbnail: imgs[0], media: [{ type: 'image', url: imgs[0] }] });
+  }
+  return null;
+}
+
+/** 3) savepin.app — reserva comunitária. */
+async function viaSavePin(finalUrl) {
+  const res = await httpGet(
+    `https://www.savepin.app/download.php?url=${encodeURIComponent(finalUrl)}&lang=en&type=redirect`,
+    {
+      headers: {
+        'user-agent': BROWSER_UA,
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        referer: 'https://www.savepin.app/'
+      },
+      timeoutMs: 30_000
+    }
+  );
+  if (!res.ok || !res.text) return null;
+  const html = res.text;
+
+  const videos = [...html.matchAll(/href="([^"]*(?:pinimg\.com|media\.savepin)[^"]*\.(?:mp4)[^"]*)"/gi)]
+    .map((m) => m[1].replace(/&amp;/g, '&'));
+  if (videos.length) {
+    return baseResult({ kind: 'video', media: [{ type: 'video', url: videos[0] }] });
+  }
+  const images = [...html.matchAll(/href="([^"]*pinimg\.com\/originals\/[^"]*\.(?:jpg|jpeg|png|gif)[^"]*)"/gi)]
+    .map((m) => m[1].replace(/&amp;/g, '&'));
+  if (images.length) {
+    return baseResult({ kind: 'image', thumbnail: images[0], media: [{ type: 'image', url: images[0] }] });
+  }
+  return null;
 }
 
 /**
@@ -84,77 +186,43 @@ function scrapeHtmlFallback(html) {
  * @param {'melhor'|'alta'|'media'|'baixa'} quality
  */
 export async function downloadPinterest(url, quality = 'melhor') {
+  const errors = [];
   const finalUrl = await resolveRedirect(url).catch(() => url);
-  log.dl(`pinterest: ${shortUrl(finalUrl)}`);
+  const pinId = extractPinId(finalUrl) || extractPinId(url);
 
-  let html = null;
+  if (pinId) {
+    try {
+      const found = await viaWidgetApi(pinId);
+      if (found?.media?.length) return found;
+      errors.push('widget api: sem mídia');
+    } catch (error) {
+      errors.push(`widget api: ${String(error.message).slice(0, 60)}`);
+    }
+  }
+
   try {
-    html = await fetchText(finalUrl, {
-      headers: { accept: 'text/html,application/xhtml+xml' },
-      timeoutMs: 30_000
-    });
+    const found = await viaPageScrape(finalUrl);
+    if (found?.media?.length) return found;
+    errors.push('scraping: sem mídia');
   } catch (error) {
-    log.warn(`pinterest: HTML falhou (${error.message})`);
+    errors.push(`scraping: ${String(error.message).slice(0, 60)}`);
   }
 
-  if (html) {
-    const pws = parsePwsData(html);
-    const pin = pws ? findPinInPws(pws) : null;
-
-    if (pin) {
-      const out = {
-        platform: 'Pinterest',
-        title: pin.title || pin.grid_description || '',
-        author: pin.pinner?.username || '',
-        kind: 'image'
-      };
-      const video = bestVideo(pin, quality);
-      if (video) {
-        out.kind = 'video';
-        out.media = [{ type: 'video', url: video.url, label: `${video.name} (${video.width}x${video.height})`, quality }];
-        return out;
-      }
-      const images = pin.images;
-      if (images) {
-        const best = images.orig || images['736x'] || images['564x'] || Object.values(images).sort((a, b) => (b.width || 0) - (a.width || 0))[0];
-        if (best?.url) {
-          const isGif = /\.gif/i.test(best.url);
-          out.kind = isGif ? 'gif' : 'image';
-          let target = best.url;
-          if (quality === 'baixa' && images['564x']?.url) target = images['564x'].url;
-          else if (quality === 'media' && images['736x']?.url) target = images['736x'].url;
-          out.media = [{ type: isGif ? 'gif' : 'image', url: target, label: `original ${best.width || ''}x${best.height || ''}`.trim(), quality }];
-          return out;
-        }
-      }
-    }
-
-    const scraped = scrapeHtmlFallback(html);
-    if (scraped.length) {
-      return { platform: 'Pinterest', title: '', kind: scraped[0].type, media: scraped };
-    }
+  try {
+    const found = await viaSavePin(finalUrl);
+    if (found?.media?.length) return found;
+  } catch (error) {
+    errors.push(`savepin: ${String(error.message).slice(0, 60)}`);
   }
 
-  // Fallback: API pública
-  const media = await fallbackPool.run(async (endpoint) => {
-    const json = await fetchJson(endpoint + encodeURIComponent(finalUrl), { timeoutMs: 45_000 });
-    const found = collectUrls(json);
-    if (!found.length) throw new Error('API de fallback sem resultado');
-    return found;
-  });
-
-  return { platform: 'Pinterest', title: '', kind: media[0].type, media };
-}
-
-function collectUrls(obj, out = []) {
-  if (!obj || typeof obj !== 'object') return out;
-  if (typeof obj === 'string') return out;
-  for (const [k, v] of Object.entries(obj)) {
-    if (typeof v === 'string' && /^https?:/.test(v) && /(pinimg|\.mp4|\.jpg|\.jpeg|\.png|\.gif)/i.test(v)) {
-      out.push({ type: /\.mp4/i.test(v) ? 'video' : /\.gif/i.test(v) ? 'gif' : 'image', url: v, label: k, quality: 'api' });
-    } else if (v && typeof v === 'object') {
-      collectUrls(v, out);
-    }
+  log.dl('pinterest: tentando via cobalt…');
+  try {
+    const { buffers, audioBuffer, ...rest } = await cobaltDownload(finalUrl, quality);
+    if (buffers?.length) return baseResult({ ...rest, buffers, audioBuffer });
+    errors.push('cobalt: sem buffer');
+  } catch (error) {
+    errors.push(`cobalt: ${String(error.message).slice(0, 60)}`);
   }
-  return out;
+
+  throw new Error(`Pinterest falhou em todas as estratégias: ${errors.join(' | ')}`);
 }

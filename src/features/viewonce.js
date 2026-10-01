@@ -1,36 +1,92 @@
-// 👁️ VIEW ONCE — captura de mensagens de visualização única.
+// 👁️ VIEW ONCE — captura 100% silenciosa de mensagens de visualização única.
 //
-// 1) AUTO: toda view once recebida é baixada e enviada para o dono (padrão ON).
-// 2) RESPOSTA: responda QUALQUER view once com QUALQUER mensagem e o bot baixa.
+// 1) AUTO: toda view once REAL recebida é baixada em silêncio e enviada SOMENTE para o privado do dono.
+// 2) RESPOSTA: se o dono responder uma view once REAL em qualquer chat, o bot baixa em silêncio
+//    e envia SOMENTE para o privado do dono (0 rastros na conversa ou no grupo).
 
 import { downloadMediaMessage, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { cfg } from '../core/config.js';
-import { log } from '../core/logger.js';
-import { truncate, formatDate } from '../util/text.js';
+import { log, baileysLogger } from '../core/logger.js';
+import { formatDate, isGroup } from '../util/text.js';
 import { formatBytes } from '../core/http.js';
 import { messageCache } from '../wa/cache.js';
 
-// Tipos que podem vir embrulhados como view once.
+// Wrappers explícitos de visualização única.
 const VO_WRAPPERS = [
   'viewOnceMessage',
   'viewOnceMessageV2',
-  'viewOnceMessageV2Extension',
-  'documentWithCaptionMessage'
+  'viewOnceMessageV2Extension'
 ];
+
+// Wrappers neutros que podem conter uma viewOnceMessage lá dentro.
+const OUTER_WRAPPERS = [
+  'ephemeralMessage',
+  'documentWithCaptionMessage',
+  'editedMessage'
+];
+
 const MEDIA_TYPES = ['imageMessage', 'videoMessage', 'audioMessage'];
 
-/** Desembrulha uma mensagem view once. Retorna { type, node } ou null. */
-export function unwrapViewOnce(message) {
-  if (!message) return null;
+function plainKey(key) {
+  if (!key) return null;
+  try {
+    if (Buffer.isBuffer(key)) return key.length ? key : null;
+    if (key instanceof Uint8Array) return key.length ? Buffer.from(key) : null;
+    if (typeof key === 'string') {
+      const b = Buffer.from(key, 'base64');
+      return b.length ? b : null;
+    }
+    if (key?.type === 'Buffer' && Array.isArray(key.data)) return Buffer.from(key.data);
+    if (Array.isArray(key)) return Buffer.from(key);
+    if (typeof key === 'object') {
+      const vals = Object.keys(key)
+        .filter((k) => /^\d+$/.test(k))
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => key[k]);
+      if (vals.length) return Buffer.from(vals);
+    }
+  } catch {}
+  return null;
+}
+
+function normalizeNode(node) {
+  if (!node || typeof node !== 'object') return node;
+  const copy = { ...node };
+  const k = plainKey(copy.mediaKey);
+  if (k) copy.mediaKey = k;
+  return copy;
+}
+
+/**
+ * Desembrulha uma mensagem view once REAL.
+ * Retorna { type, node } SOMENTE se estiver dentro de viewOnceMessage*
+ * OU se o próprio nó de mídia tiver `viewOnce: true`.
+ * Fotos, vídeos e áudios comuns retornam `null`.
+ */
+export function unwrapViewOnce(message, insideVoWrapper = false) {
+  if (!message || typeof message !== 'object') return null;
+
   for (const wrapper of VO_WRAPPERS) {
     const inner = message[wrapper]?.message;
     if (inner) {
-      const found = unwrapViewOnce(inner);
+      const found = unwrapViewOnce(inner, true);
       if (found) return found;
     }
   }
+
+  for (const wrapper of OUTER_WRAPPERS) {
+    const inner = message[wrapper]?.message;
+    if (inner) {
+      const found = unwrapViewOnce(inner, insideVoWrapper);
+      if (found) return found;
+    }
+  }
+
   for (const type of MEDIA_TYPES) {
-    if (message[type]) return { type, node: message[type] };
+    const node = message[type];
+    if (node && (insideVoWrapper || node.viewOnce === true)) {
+      return { type, node };
+    }
   }
   return null;
 }
@@ -39,30 +95,44 @@ export function isViewOnce(message) {
   return !!unwrapViewOnce(message);
 }
 
-/** Mensagem citada (reply) contém view once? */
+function getReplyContextInfo(message) {
+  if (!message || typeof message !== 'object') return null;
+  return (
+    message.extendedTextMessage?.contextInfo ||
+    message.imageMessage?.contextInfo ||
+    message.videoMessage?.contextInfo ||
+    message.stickerMessage?.contextInfo ||
+    message.documentMessage?.contextInfo ||
+    message.ephemeralMessage?.message?.extendedTextMessage?.contextInfo ||
+    null
+  );
+}
+
+/** Mensagem citada (reply) contém uma view once REAL? */
 export function quotedViewOnce(message) {
-  const quoted = message?.extendedTextMessage?.contextInfo?.quotedMessage;
-  if (!quoted) return null;
-  return unwrapViewOnce(quoted);
+  const ctx = getReplyContextInfo(message);
+  if (!ctx?.quotedMessage) return null;
+  return unwrapViewOnce(ctx.quotedMessage);
 }
 
 /** Baixa a mídia de uma view once com múltiplas estratégias. */
 export async function downloadViewOnceMedia(sock, msg) {
-  const vo = unwrapViewOnce(msg.message) || unwrapViewOnce(msg.message?.extendedTextMessage?.contextInfo?.quotedMessage);
+  const vo = unwrapViewOnce(msg.message) || quotedViewOnce(msg.message);
   if (!vo) throw new Error('não é uma mensagem de visualização única');
+  const node = normalizeNode(vo.node);
 
   const errors = [];
   const strategies = [
     () =>
       downloadMediaMessage(
-        { key: msg.key, message: { [vo.type]: vo.node } },
+        { key: msg.key, message: { [vo.type]: node } },
         'buffer',
         {},
-        { reuploadRequest: sock.updateMediaMessage }
+        { logger: baileysLogger, reuploadRequest: sock.updateMediaMessage }
       ),
-    () => downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage }),
+    () => downloadMediaMessage(msg, 'buffer', {}, { logger: baileysLogger, reuploadRequest: sock.updateMediaMessage }),
     async () => {
-      const stream = await downloadContentFromMessage(vo.node, vo.type.replace(/Message$/, ''));
+      const stream = await downloadContentFromMessage(node, vo.type.replace(/Message$/, ''));
       const chunks = [];
       for await (const c of stream) chunks.push(c);
       return Buffer.concat(chunks);
@@ -70,14 +140,14 @@ export async function downloadViewOnceMedia(sock, msg) {
     async () => {
       if (typeof sock.updateMediaMessage !== 'function') throw new Error('reupload indisponível');
       const refreshed = await sock.updateMediaMessage(msg);
-      return downloadMediaMessage(refreshed, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
+      return downloadMediaMessage(refreshed, 'buffer', {}, { logger: baileysLogger, reuploadRequest: sock.updateMediaMessage });
     }
   ];
 
   for (const strategy of strategies) {
     try {
       const buffer = await strategy();
-      if (buffer?.length) return { buffer, type: vo.type, node: vo.node };
+      if (buffer?.length) return { buffer, type: vo.type, node };
     } catch (error) {
       errors.push(String(error?.message || error).slice(0, 90));
     }
@@ -86,19 +156,29 @@ export async function downloadViewOnceMedia(sock, msg) {
 }
 
 function captionFor(source, { auto }) {
-  const who = source.pushName || source.key?.participant || source.key?.remoteJid?.split('@')[0] || 'desconhecido';
+  const chatJid = source.key?.remoteJid || '';
+  const who =
+    source.pushName ||
+    source.sender?.split('@')[0] ||
+    source.key?.participant?.split('@')[0] ||
+    chatJid.split('@')[0] ||
+    'desconhecido';
+  const where = isGroup(chatJid) ? `\n📍 Grupo: ${chatJid.split('@')[0]}` : `\n💬 Chat: ${chatJid.split('@')[0]}`;
   return [
     `${auto ? '👁️ *VIEW ONCE CAPTURADA*' : '👁️ *VIEW ONCE BAIXADA*'}`,
     '',
-    `👤 De: ${who}`,
+    `👤 De: ${who}${where}`,
     `🕒 Recebida: ${formatDate(source.ts || Date.now())}`
   ].join('\n');
 }
 
-/** Envia a mídia capturada ao destino configurado. */
+/**
+ * Envia a mídia capturada EXCLUSIVAMENTE para o privado do dono (`ctx.ownerJid`).
+ * Trava de segurança: nunca envia para grupos nem para conversas de terceiros.
+ */
 async function deliver(sock, ctx, source, result) {
-  const settings = cfg.get().viewOnce;
-  const dest = settings.destinoAuto === 'chat' || !ctx.isAuto ? ctx.msg.key.remoteJid : ctx.ownerJid;
+  const dest = ctx.ownerJid;
+  if (!dest || isGroup(dest)) return;
   const caption = captionFor(source, { auto: ctx.isAuto });
   const { buffer, type, node } = result;
 
@@ -115,22 +195,23 @@ async function deliver(sock, ctx, source, result) {
       });
       await sock.sendMessage(dest, { text: caption });
     }
-    log.ok(`view once capturada (${formatBytes(buffer.length)}) → ${dest}`);
+    log.ok(`view once capturada em silêncio (${formatBytes(buffer.length)}) → ${dest}`);
   } catch (error) {
-    log.error('falha ao entregar view once', error);
+    log.error('falha ao entregar view once pro dono', error);
   }
 }
 
 /**
- * Handler principal chamado pelo roteador para toda mensagem recebida.
+ * Handler principal chamado pelo roteador para mensagens recebidas.
+ * 100% silencioso: envia somente para `ownerJid`, zero rastro no chat de origem.
  */
 export async function onViewOnceMessage(sock, msg, { ownerJid }) {
   const settings = cfg.get().viewOnce;
   if (!settings.auto) return false;
+  if (!ownerJid || isGroup(ownerJid)) return false;
   if (msg.key.fromMe) return false;
   if (!isViewOnce(msg.message)) return false;
 
-  // Evita capturar duas vezes ( eventos duplicados )
   const dedupeKey = `${msg.key.remoteJid}:${msg.key.id}`;
   if (recentCaptures.has(dedupeKey)) return false;
   recentCaptures.add(dedupeKey);
@@ -142,11 +223,6 @@ export async function onViewOnceMessage(sock, msg, { ownerJid }) {
     return true;
   } catch (error) {
     log.warn(`view once não baixada: ${error.message}`);
-    try {
-      await sock.sendMessage(ownerJid, {
-        text: `👁️ Uma view once chegou de ${msg.pushName || 'alguém'}, mas a mídia já expirou ou está indisponível.\n💬 Texto: "${truncate(msg.message?.viewOnceMessageV2?.message?.imageMessage?.caption || msg.message?.viewOnceMessage?.message?.videoMessage?.caption || '[sem texto]', 300)}"`
-      });
-    } catch {}
     return false;
   }
 }
@@ -154,43 +230,53 @@ export async function onViewOnceMessage(sock, msg, { ownerJid }) {
 const recentCaptures = new Set();
 
 /**
- * Captura via resposta: usuário respondeu uma view once com qualquer mensagem.
- * Retorna true se capturou.
+ * Captura via resposta: quando o DONO responde uma view once REAL em qualquer conversa/grupo.
+ * Baixa em silêncio e envia SOMENTE para o privado do dono (0 rastros no chat original).
  */
 export async function onViewOnceReply(sock, msg, { ownerJid, senderIsOwner }) {
-  const settings = cfg.get().viewOnce;
-  if (settings.resposta === 'dono' && !senderIsOwner) return false;
+  if (!senderIsOwner || !ownerJid || isGroup(ownerJid)) return false;
+
+  const ctx = getReplyContextInfo(msg.message);
+  if (!ctx) return false;
 
   // Caso A: a citação carrega o conteúdo view once completo.
   if (quotedViewOnce(msg.message)) {
     try {
-      const result = await downloadViewOnceMedia(sock, msg);
-      await deliver(sock, { msg, ownerJid, isAuto: false }, { pushName: msg.pushName, key: msg.key, ts: Date.now() }, result);
+      const fake = {
+        key: {
+          remoteJid: msg.key.remoteJid,
+          id: ctx.stanzaId || msg.key.id,
+          fromMe: false,
+          ...(ctx.participant ? { participant: ctx.participant } : {})
+        },
+        message: ctx.quotedMessage
+      };
+      const result = await downloadViewOnceMedia(sock, fake);
+      await deliver(
+        sock,
+        { msg, ownerJid, isAuto: false },
+        { pushName: msg.pushName, key: fake.key, ts: Date.now() },
+        result
+      );
       return true;
     } catch (error) {
       log.warn(`view once por resposta falhou na citação: ${error.message}`);
-      // segue para o caso B
     }
   }
 
-  // Caso B: citação chegou "vazia" (placeholder) — procura no cache.
-  const quotedId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
+  // Caso B: citação chegou como placeholder ou sem mediaKey — procura no cache se a original era view once REAL.
+  const quotedId = ctx.stanzaId;
   if (!quotedId) return false;
-  const cached = messageCache.get(msg.key.remoteJid, quotedId);
+  const cached = messageCache.get(msg.key.remoteJid, quotedId) || messageCache.getById(quotedId);
   if (!cached || !isViewOnce(cached.message)) return false;
 
   try {
-    const fake = { key: { ...msg.key, id: quotedId }, message: cached.message };
+    const fake = { key: { remoteJid: msg.key.remoteJid, id: quotedId, fromMe: false }, message: cached.message };
     const result = await downloadViewOnceMedia(sock, fake);
     await deliver(sock, { msg, ownerJid, isAuto: false }, cached, result);
     return true;
   } catch (error) {
     log.warn(`view once por resposta falhou no cache: ${error.message}`);
-    try {
-      await sock.sendMessage(msg.key.remoteJid, {
-        text: '👁️ Essa view once já expirou — a mídia não está mais disponível no servidor. 😕'
-      });
-    } catch {}
     return false;
   }
 }

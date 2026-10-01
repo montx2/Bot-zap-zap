@@ -8,7 +8,7 @@
     "start": "node src/main.js",
     "pair": "node scripts/pair.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "test": "node --test tests/unit.test.mjs tests/integration.test.mjs tests/freshness.test.mjs"
+    "test": "node --test tests/unit.test.mjs tests/integration.test.mjs tests/downloaders.test.mjs tests/freshness.test.mjs"
   },
   "engines": {
     "node": ">=20"

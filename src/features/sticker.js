@@ -1,13 +1,14 @@
 // 🖼️ STICKER ENGINE — figurinhas de imagem, vídeo, GIF e outras figurinhas,
 // com remoção de fundo por IA (.sfundo) e renomeio de pack (.take).
 
-import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import { downloadMediaMessage, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { cfg } from '../core/config.js';
-import { log } from '../core/logger.js';
-import { toStickerWebp, hasFfmpeg } from '../util/ffmpeg.js';
-import { isWebp, isAnimatedWebp, tagSticker } from '../util/webp.js';
+import { log, baileysLogger } from '../core/logger.js';
+import { toStickerWebp, decodeWebpToPng, detectMediaExt, hasFfmpeg } from '../util/ffmpeg.js';
+import { isWebp, isAnimatedWebp, parseWebp, readStickerExif, tagSticker } from '../util/webp.js';
 import { removeBackground } from './bgremoval.js';
 import { formatBytes } from '../core/http.js';
+import { messageCache } from '../wa/cache.js';
 
 const MEDIA_MAP = {
   imageMessage: 'image',
@@ -15,110 +16,287 @@ const MEDIA_MAP = {
   stickerMessage: 'sticker'
 };
 
-/** Extrai a mídia citada/anexada relevante para figurinha (inclusive view once). */
-export async function extractStickerSource(sock, msg) {
+const WRAPPERS = [
+  'ephemeralMessage',
+  'viewOnceMessage',
+  'viewOnceMessageV2',
+  'viewOnceMessageV2Extension',
+  'documentWithCaptionMessage',
+  'editedMessage'
+];
+
+function unwrapMessage(message) {
+  let cur = message;
+  for (let i = 0; i < 6 && cur; i++) {
+    let next = null;
+    for (const w of WRAPPERS) {
+      if (cur[w]?.message) {
+        next = cur[w].message;
+        break;
+      }
+    }
+    if (!next) break;
+    cur = next;
+  }
+  return cur;
+}
+
+function pickType(rawMessage, unwrapViewOnce) {
+  const message = unwrapMessage(rawMessage);
+  if (!message) return null;
+
+  for (const [rawType, kind] of Object.entries(MEDIA_MAP)) {
+    if (message[rawType]) return { type: kind, rawType, node: message[rawType] };
+  }
+
+  if (message.documentMessage) {
+    const doc = message.documentMessage;
+    const mime = String(doc.mimetype || '').toLowerCase();
+    const name = String(doc.fileName || '').toLowerCase();
+    if (mime.includes('webp') || name.endsWith('.webp')) {
+      return { type: 'sticker', rawType: 'documentMessage', node: doc };
+    }
+    if (mime.startsWith('video/') || mime.includes('gif') || /\.(mp4|mov|webm|mkv|gif)$/i.test(name)) {
+      return { type: 'video', rawType: 'documentMessage', node: doc };
+    }
+    if (mime.startsWith('image/') || /\.(jpe?g|png|bmp)$/i.test(name)) {
+      return { type: 'image', rawType: 'documentMessage', node: doc };
+    }
+  }
+
+  const vo = unwrapViewOnce(rawMessage);
+  if (vo && vo.type !== 'audioMessage') {
+    return {
+      type: MEDIA_MAP[vo.type] || 'image',
+      rawType: vo.type,
+      node: vo.node
+    };
+  }
+  return null;
+}
+
+function findContextInfo(rawMessage) {
+  const m = unwrapMessage(rawMessage) || rawMessage || {};
+  return (
+    m.extendedTextMessage?.contextInfo ||
+    m.imageMessage?.contextInfo ||
+    m.videoMessage?.contextInfo ||
+    m.stickerMessage?.contextInfo ||
+    m.documentMessage?.contextInfo ||
+    rawMessage?.extendedTextMessage?.contextInfo ||
+    null
+  );
+}
+
+/** A citação aponta para uma mensagem de visualização única? */
+function isQuotedViewOnce(rawMessage, unwrapViewOnce) {
+  const m = unwrapMessage(rawMessage) || rawMessage || {};
+  const quoted =
+    m.extendedTextMessage?.contextInfo?.quotedMessage ||
+    m.imageMessage?.contextInfo?.quotedMessage ||
+    m.videoMessage?.contextInfo?.quotedMessage ||
+    m.stickerMessage?.contextInfo?.quotedMessage ||
+    null;
+  return Boolean(quoted && unwrapViewOnce(quoted));
+}
+
+async function downloadStickerMedia(sock, holder, picked) {
+  const { rawType, node } = picked;
+  const mediaKind = String(rawType || 'imageMessage').replace(/Message$/, '');
+  const errors = [];
+
+  const strategies = [
+    () =>
+      downloadMediaMessage(holder, 'buffer', {}, {
+        logger: baileysLogger,
+        reuploadRequest: sock?.updateMediaMessage
+      }),
+    () =>
+      downloadMediaMessage(
+        { key: holder.key, message: { [rawType]: node } },
+        'buffer',
+        {},
+        {
+          logger: baileysLogger,
+          reuploadRequest: sock?.updateMediaMessage
+        }
+      ),
+    async () => {
+      const stream = await downloadContentFromMessage(node, mediaKind);
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    }
+  ];
+
+  for (const run of strategies) {
+    try {
+      const buf = await run();
+      if (Buffer.isBuffer(buf) && buf.length > 0) return buf;
+    } catch (err) {
+      errors.push(String(err?.message || err).slice(0, 100));
+    }
+  }
+  throw new Error(`Não consegui baixar a mídia (${errors[0] || 'erro desconhecido'})`);
+}
+
+/**
+ * Extrai a mídia citada/anexada relevante para figurinha.
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.allowViewOnce=false] Só o dono no próprio privado pode
+ *   transformar uma view once em figurinha. Em grupos/chats ativados a extração
+ *   de view once é BLOQUEADA, para o bot nunca republicar mídia de visualização
+ *   única (0 rastros).
+ */
+export async function extractStickerSource(sock, msg, { onProgress, allowViewOnce = false } = {}) {
   const { unwrapViewOnce } = await import('./viewonce.js');
   const m = msg.message || {};
-  const ctx = m.extendedTextMessage?.contextInfo;
-  const quoted = ctx?.quotedMessage;
 
-  const pickType = (message) => {
-    for (const [type] of Object.entries(MEDIA_MAP)) {
-      if (message?.[type]) return { type, node: message[type] };
-    }
-    // view once embrulhada
-    const vo = unwrapViewOnce(message);
-    if (vo && vo.type !== 'audioMessage') return vo;
+  // View once como origem: só no privado do dono.
+  if (!allowViewOnce && (unwrapViewOnce(m) || isQuotedViewOnce(m, unwrapViewOnce))) {
     return null;
-  };
+  }
 
-  // 1) mídia anexada direto (ou anexada como view once)
-  const direct = pickType(m);
+  // 1) mídia anexada direto (ou anexada como view once / efêmera)
+  const direct = pickType(m, unwrapViewOnce);
   if (direct) {
-    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
+    await onProgress?.('⏳ Baixando mídia…');
+    const buffer = await downloadStickerMedia(sock, msg, direct);
     return { buffer, type: direct.type, node: direct.node };
   }
 
-  // 2) mídia citada (reply), inclusive citação de view once
+  // 2) mídia citada (reply), inclusive citação de view once ou cacheada
+  const ctx = findContextInfo(m);
+  const quoted = ctx?.quotedMessage;
   if (quoted) {
-    const q = pickType(quoted);
+    const q = pickType(quoted, unwrapViewOnce);
     if (q) {
-      const fake = { key: { ...msg.key, id: ctx.stanzaId }, message: quoted };
-      const buffer = await downloadMediaMessage(fake, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
-      return { buffer, type: q.type, node: q.node };
+      await onProgress?.('⏳ Baixando mídia citada…');
+      const fake = {
+        key: {
+          remoteJid: msg.key.remoteJid,
+          id: ctx.stanzaId || msg.key.id,
+          fromMe: false,
+          ...(ctx.participant ? { participant: ctx.participant } : {})
+        },
+        message: unwrapMessage(quoted) || quoted
+      };
+      try {
+        const buffer = await downloadStickerMedia(sock, fake, q);
+        return { buffer, type: q.type, node: q.node };
+      } catch (err) {
+        // Fallback: tenta recuperar do cache de mensagens se a citação veio incompleta
+        if (ctx.stanzaId) {
+          const cached = messageCache.get(msg.key.remoteJid, ctx.stanzaId) || messageCache.getById(ctx.stanzaId);
+          const cq = cached && pickType(cached.message, unwrapViewOnce);
+          if (cq) {
+            const cachedHolder = {
+              key: { remoteJid: msg.key.remoteJid, id: cached.id, fromMe: !!cached.fromMe },
+              message: cached.message
+            };
+            const buffer = await downloadStickerMedia(sock, cachedHolder, cq);
+            return { buffer, type: cq.type, node: cq.node };
+          }
+        }
+        throw err;
+      }
     }
   }
+
+  // 3) Citação veio como placeholder vazio — procura no messageCache pelo stanzaId
+  if (ctx?.stanzaId) {
+    const cached = messageCache.get(msg.key.remoteJid, ctx.stanzaId) || messageCache.getById(ctx.stanzaId);
+    const cq = cached && pickType(cached.message, unwrapViewOnce);
+    if (cq) {
+      await onProgress?.('⏳ Baixando mídia do histórico…');
+      const cachedHolder = {
+        key: { remoteJid: msg.key.remoteJid, id: cached.id, fromMe: !!cached.fromMe },
+        message: cached.message
+      };
+      const buffer = await downloadStickerMedia(sock, cachedHolder, cq);
+      return { buffer, type: cq.type, node: cq.node };
+    }
+  }
+
   return null;
 }
 
 /**
  * Cria figurinha a partir da mídia.
- * @returns {Promise<Buffer>} webp pronto para enviar
+ * @returns {Promise<Buffer>} webp pronto para enviar (com VP8X + EXIF válidos)
  */
-export async function makeSticker(source, { removeBg = false, pack, author } = {}) {
+export async function makeSticker(source, { removeBg = false, pack, author, emojis, onProgress } = {}) {
   const { buffer, type, node } = source;
   const mime = String(node?.mimetype || '').toLowerCase();
+  const magicExt = detectMediaExt(buffer, '');
+  const isStickerInput = type === 'sticker' || type === 'stickerMessage' || mime.includes('webp') || isWebp(buffer);
+
+  if (isStickerInput) {
+    if (!isWebp(buffer)) throw new Error('webp inválido');
+    if (removeBg) {
+      if (!hasFfmpeg()) {
+        throw new Error('FFmpeg não encontrado — rode `.doctor` para ver como instalar.');
+      }
+      await onProgress?.('🖼️ Decodificando figurinha…');
+      const { buffer: png } = await decodeWebpToPng(buffer);
+      await onProgress?.('🎭 Removendo o fundo com IA…');
+      const { buffer: cut, via } = await removeBackground(png);
+      await onProgress?.(`🖌️ Fundo removido (${via})! Criando figurinha 512×512…`);
+      const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png', onProgress });
+      await onProgress?.('🏷️ Gravando dados da figurinha…');
+      return tagSticker(webp, { pack, author, emojis });
+    }
+
+    const info = parseWebp(buffer);
+    const oldExif = readStickerExif(buffer);
+    const finalEmojis = emojis?.length ? emojis : oldExif?.emojis;
+
+    // Se for um WebP estático fora do padrão 512x512 e tivermos FFmpeg, padroniza em 512x512
+    if (!info.animated && (info.width !== 512 || info.height !== 512) && hasFfmpeg()) {
+      await onProgress?.('🖌️ Ajustando figurinha para 512×512…');
+      const { buffer: webp } = await toStickerWebp(buffer, { animated: false, ext: '.webp', onProgress });
+      await onProgress?.('🏷️ Gravando dados da figurinha…');
+      return tagSticker(webp, { pack, author, emojis: finalEmojis });
+    }
+
+    await onProgress?.('🏷️ Gravando dados da figurinha…');
+    return tagSticker(buffer, { pack, author, emojis: finalEmojis });
+  }
 
   if (!hasFfmpeg()) {
     throw new Error('FFmpeg não encontrado — rode `.doctor` para ver como instalar.');
   }
 
-  let imageBuffer = buffer;
+  const isGif = magicExt === '.gif' || mime.includes('gif') || !!node?.gifPlayback;
+  const isVideo =
+    type === 'video' ||
+    type === 'videoMessage' ||
+    mime.startsWith('video/') ||
+    magicExt === '.mp4' ||
+    magicExt === '.webm' ||
+    isGif;
 
-  if (type === 'sticker' || mime.includes('webp')) {
-    // figurinha → figurinha (re-tag ou remoção de fundo via decodificação)
-    if (!isWebp(buffer)) throw new Error('webp inválido');
-    if (removeBg) {
-      // decodifica o primeiro frame para PNG com ffmpeg
-      const { buffer: png } = await decodeWebpToPng(buffer);
-      const { buffer: cut } = await removeBackground(png);
-      imageBuffer = cut;
-      const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png' });
-      return tagSticker(webp, { pack, author });
-    }
-    return tagSticker(buffer, { pack, author });
-  }
-
-  const isVideo = type === 'video' || mime.startsWith('video/');
-  const isGif = isVideo && (mime.includes('gif') || !!node?.gifPlayback);
-
-  if (removeBg && (isVideo || isGif)) {
+  if (removeBg && isVideo) {
     throw new Error('Remoção de fundo funciona só com *imagens*. Manda uma foto! 📸');
   }
 
   if (removeBg) {
     log.info('sticker com remoção de fundo…');
+    await onProgress?.('🎭 Removendo o fundo com IA… (pode levar uns segundos)');
     const { buffer: cut, via } = await removeBackground(buffer);
     log.ok(`fundo removido via ${via} (${formatBytes(cut.length)})`);
-    imageBuffer = cut;
-    const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png' });
-    return tagSticker(webp, { pack, author });
+    await onProgress?.(`🖌️ Fundo removido (${via})! Convertendo para figurinha 512×512…`);
+    const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png', onProgress });
+    await onProgress?.('🏷️ Gravando dados da figurinha…');
+    return tagSticker(webp, { pack, author, emojis });
   }
 
-  const { buffer: webp } = isVideo
-    ? await toStickerWebp(buffer, { animated: true, ext: mime.includes('gif') ? '.gif' : '.mp4' })
-    : await toStickerWebp(buffer, { animated: false, ext: mime.includes('png') ? '.png' : '.jpg' });
-  return tagSticker(webp, { pack, author });
-}
-
-async function decodeWebpToPng(webpBuffer) {
-  // usa ffmpeg via toStickerWebp não serve (já é webp); implementação direta:
-  const { spawnSync } = await import('node:child_process');
-  const os = await import('node:os');
-  const path = await import('node:path');
-  const fs = await import('node:fs');
-  const crypto = await import('node:crypto');
-  const inFile = path.join(os.default.tmpdir(), `nexus-${crypto.randomBytes(5).toString('hex')}.webp`);
-  const outFile = inFile.replace('.webp', '.png');
-  fs.writeFileSync(inFile, webpBuffer);
-  try {
-    const probe = spawnSync('ffmpeg', ['-y', '-i', inFile, '-frames:v', '1', outFile], { timeout: 60_000 });
-    if (probe.status !== 0 || !fs.existsSync(outFile)) throw new Error('falha ao decodificar webp');
-    return { buffer: fs.readFileSync(outFile) };
-  } finally {
-    fs.rmSync(inFile, { force: true });
-    fs.rmSync(outFile, { force: true });
-  }
+  await onProgress?.(isVideo ? '🎬 Convertendo vídeo/GIF em figurinha animada…' : '🖌️ Convertendo imagem em figurinha 512×512…');
+  const ext = magicExt || (isGif ? '.gif' : isVideo ? '.mp4' : mime.includes('png') ? '.png' : '.jpg');
+  const { buffer: webp } = await toStickerWebp(buffer, { animated: isVideo, ext, onProgress });
+  await onProgress?.('🏷️ Gravando dados da figurinha…');
+  return tagSticker(webp, { pack, author, emojis });
 }
 
 /** Info do pack atual para comandos. */
