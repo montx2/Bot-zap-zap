@@ -1,14 +1,15 @@
 // 🛡️ ANTI-DELETE — nada some.
-// ATIVO POR PADRÃO EM TODOS os chats. Filtros de ignorar configuráveis:
+// Quando alguém apaga uma mensagem, o bot envia o conteúdo recuperado
+// EXCLUSIVAMENTE para o privado do dono (nunca vaza no grupo ou no chat alheio).
+// Filtros de ignorar configuráveis:
 //   .antidelete ignorar grupos | privado | <jid> | aqui
-// Quando alguém apaga, o bot restaura a mensagem no próprio chat
-// (texto, imagem, vídeo, áudio, figurinha, documento...).
 
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { cfg } from '../core/config.js';
-import { log } from '../core/logger.js';
+import { log, baileysLogger } from '../core/logger.js';
 import { messageCache } from '../wa/cache.js';
 import { formatDate, truncate, isGroup } from '../util/text.js';
+import { isAnimatedWebp } from '../util/webp.js';
 
 /** O chat atual está na lista de ignorados? */
 export function isIgnored(jid, list = cfg.get().antiDelete.ignorar) {
@@ -38,48 +39,48 @@ export function normalizeIgnoreTarget(arg, msg) {
   return a;
 }
 
-function header(entry) {
-  return [
-    '🛡️ *ANTI-DELETE — mensagem apagada*',
-    `👤 De: ${entry.pushName || entry.jid.split('@')[0]}`,
-    `💬 ${isGroup(entry.jid) ? 'Grupo' : 'Privado'} · ${formatDate(entry.ts)}`
-  ].join('\n');
-}
+const MEDIA_KEYS = ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'];
 
 function findMedia(message) {
-  for (const type of ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage']) {
-    if (message?.[type]) return { type, node: message[type] };
+  if (!message) return null;
+  for (const k of MEDIA_KEYS) {
+    if (message[k]) return { type: k, node: message[k] };
   }
   return null;
 }
 
-const processedRevokes = new Set();
+function header(entry, chatJid) {
+  const who = entry.pushName || entry.sender?.split('@')[0] || 'Alguém';
+  const where = isGroup(chatJid) ? `\n📍 Grupo: ${chatJid.split('@')[0]}` : `\n💬 Chat: ${chatJid.split('@')[0]}`;
+  return [
+    '🛡️ *ANTI-DELETE — MENSAGEM APAGADA*',
+    `👤 Autor: *${who}*${where}`,
+    `🕒 Original: ${formatDate(entry.ts)}`
+  ].join('\n');
+}
 
 /**
- * Trata um REVOKE (mensagem apagada). Retorna true se restaurou.
+ * Trata evento de mensagem apagada (protocolMessage REVOKE).
+ * Envia SEMPRE apenas para o privado do dono (`ownerJid`), nunca para o grupo/chat original.
  */
 export async function handleDelete(sock, revokeMsg, { ownerJid }) {
   const settings = cfg.get().antiDelete;
   if (!settings.ativo) return false;
+  if (!ownerJid || isGroup(ownerJid)) return false;
 
-  const proto = revokeMsg?.message?.protocolMessage;
-  const targetId = proto?.key?.id || revokeMsg?.key?.id;
-  if (!targetId) return false;
+  const proto = revokeMsg.message?.protocolMessage;
+  const targetKey = proto?.key;
+  if (!targetKey?.id) return false;
 
-  // dedupe: o mesmo revoke pode chegar pelo upsert e pelo messages.update
-  if (processedRevokes.has(targetId)) return true;
-  processedRevokes.add(targetId);
-  if (processedRevokes.size > 1000) processedRevokes.delete(processedRevokes.values().next().value);
-
-  const entry = messageCache.getById(targetId);
-  if (!entry) return false; // não vimos a mensagem original
-  if (entry.fromMe) return true; // não reporta o que nós mesmos apagamos
-
-  const chatJid = entry.jid;
+  const chatJid = targetKey.remoteJid || revokeMsg.key.remoteJid;
   if (isIgnored(chatJid, settings.ignorar)) return false;
 
-  const caption = header(entry);
-  log.warn(`anti-delete: mensagem apagada em ${chatJid} (${targetId})`);
+  const entry = messageCache.get(chatJid, targetKey.id) || messageCache.getById(targetKey.id);
+  if (!entry) return false;
+  if (entry.fromMe) return false; // ignora apagadas pelo próprio bot/dono
+
+  const caption = header(entry, chatJid);
+  log.warn(`anti-delete: mensagem apagada em ${chatJid} (${targetKey.id}) → enviando ao dono`);
 
   const media = findMedia(entry.message);
   let sentMedia = false;
@@ -90,7 +91,7 @@ export async function handleDelete(sock, revokeMsg, { ownerJid }) {
         { key: { remoteJid: chatJid, id: entry.id, fromMe: false }, message: entry.message },
         'buffer',
         {},
-        { reuploadRequest: sock.updateMediaMessage }
+        { logger: baileysLogger, reuploadRequest: sock.updateMediaMessage }
       );
       if (buffer?.length) {
         const payload =
@@ -101,16 +102,22 @@ export async function handleDelete(sock, revokeMsg, { ownerJid }) {
               : media.type === 'audioMessage'
                 ? { audio: buffer, mimetype: media.node.mimetype || 'audio/ogg; codecs=opus', ptt: !!media.node.ptt }
                 : media.type === 'stickerMessage'
-                  ? { sticker: buffer }
+                  ? {
+                      sticker: buffer,
+                      mimetype: 'image/webp',
+                      width: 512,
+                      height: 512,
+                      isAnimated: isAnimatedWebp(buffer)
+                    }
                   : {
                       document: buffer,
                       fileName: media.node.fileName || `apagado-${entry.id}.bin`,
                       mimetype: media.node.mimetype || 'application/octet-stream',
                       caption
                     };
-        await sock.sendMessage(chatJid, payload);
+        await sock.sendMessage(ownerJid, payload);
         if (media.type === 'audioMessage' || media.type === 'stickerMessage') {
-          await sock.sendMessage(chatJid, { text: caption });
+          await sock.sendMessage(ownerJid, { text: caption });
         }
         sentMedia = true;
       }
@@ -121,24 +128,12 @@ export async function handleDelete(sock, revokeMsg, { ownerJid }) {
 
   if (!sentMedia) {
     const text = extractAnyText(entry.message);
-    await sock.sendMessage(chatJid, {
+    await sock.sendMessage(ownerJid, {
       text: `${caption}\n\n${text ? `💬 "${truncate(text, 1800)}"` : '📎 [conteúdo de mídia não recuperável]'}`
     });
   }
 
-  if (settings.avisarDono && ownerJid && ownerJid !== chatJid) {
-    await sock
-      .sendMessage(ownerJid, {
-        text: `${caption}\n${text0(entry)}${media ? '\n📎 (mídia restaurada no chat de origem)' : ''}`
-      })
-      .catch(() => {});
-  }
   return true;
-}
-
-function text0(entry) {
-  const t = extractAnyText(entry.message);
-  return t ? `\n💬 "${truncate(t, 800)}"` : '';
 }
 
 export function extractAnyText(message) {
@@ -168,10 +163,9 @@ export function statusText(jid) {
   return [
     '🛡️ *ANTI-DELETE*',
     '',
-    `Status global: ${s.ativo ? '✅ ATIVO (padrão)' : '❌ desativado'}`,
-    `Restaurar no chat: ${s.restaurarNoChat ? '✅' : '❌'}`,
-    `Cópia para o dono: ${s.avisarDono ? '✅' : '❌'}`,
-    `Neste chat: ${ignoredHere ? '⛔ IGNORADO' : '🟢 protegido'}`,
+    `Status global: ${s.ativo ? '✅ ATIVO (envia só no seu privado)' : '❌ desativado'}`,
+    `Destino: 🔒 Exclusivo no privado do dono`,
+    `Neste chat: ${ignoredHere ? '⛔ IGNORADO' : '🟢 monitorado'}`,
     '',
     '*Filtros de ignorar:*',
     rules,

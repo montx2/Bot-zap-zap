@@ -20,6 +20,12 @@ const ff = spawnSync(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg', ['-
 if (ff.status === 0) ok('FFmpeg instalado');
 else bad('FFmpeg ausente — figurinhas e conversões precisam dele.\n   Termux: pkg install ffmpeg · Linux: apt install ffmpeg · Windows: winget install ffmpeg');
 
+// yt-dlp (opcional, modo turbo dos downloads)
+const { hasYtDlp, findYtdlp } = await import('../src/features/downloaders/ytdlp.js');
+const ytdlp = findYtdlp();
+if (hasYtDlp()) ok(`yt-dlp instalado (modo turbo dos downloads): ${ytdlp.join(' ')}`);
+else warn('yt-dlp ausente (opcional) — dá uma reserva fortíssima nos downloads.\n   Termux/Linux: pip install -U yt-dlp');
+
 // Dependências
 if (fs.existsSync(path.join(ROOT, 'node_modules', '@whiskeysockets', 'baileys'))) ok('Dependências npm instaladas');
 else bad('Dependências ausentes — rode: npm install');

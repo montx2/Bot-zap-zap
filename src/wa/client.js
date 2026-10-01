@@ -11,6 +11,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
+  generateMessageIDV2,
   DisconnectReason,
   Browsers
 } from '@whiskeysockets/baileys';
@@ -22,6 +23,9 @@ import { ENV } from '../core/config.js';
 import { log, banner, baileysLogger } from '../core/logger.js';
 import { DATA_DIR, ensureDirs, readJson, writeJsonNow } from '../core/store.js';
 import { isTermux, platformBanner } from '../core/platform.js';
+import { markBotSent, isBotSent } from './cache.js';
+
+export { markBotSent, isBotSent };
 
 const AUTH_DIR = path.join(DATA_DIR, 'auth');
 const PAIR_FILE = path.join(DATA_DIR, 'pairing-number.txt');
@@ -185,6 +189,21 @@ export async function startClient(handlers = {}) {
     emitOwnEvents: true,
     logger: baileysLogger
   });
+  clientSocket.creds = state.creds;
+
+  // Envolve sendMessage para registrar o ID ANTES que o Baileys dispare messages.upsert
+  // (evita que o próprio envio do bot acione auto-download, view once por resposta, etc.)
+  const origSendMessage = clientSocket.sendMessage.bind(clientSocket);
+  clientSocket.sendMessage = async (jid, content, options = {}) => {
+    const msgId =
+      options?.messageId ||
+      (typeof generateMessageIDV2 === 'function' ? generateMessageIDV2(clientSocket.user?.id) : undefined);
+    if (msgId) markBotSent(msgId);
+    const res = await origSendMessage(jid, content, msgId ? { ...options, messageId: msgId } : options);
+    if (res?.key?.id) markBotSent(res.key.id);
+    return res;
+  };
+
   socket = clientSocket;
 
   clientSocket.ev.on('creds.update', saveCreds);
@@ -238,6 +257,7 @@ export async function startClient(handlers = {}) {
   clientSocket.ev.on('messages.upsert', async ({ messages, type }) => {
     if (socket !== clientSocket) return;
     for (const msg of messages) {
+      if (msg?.key?.id && isBotSent(msg.key.id)) continue;
       try {
         await handlers.onMessage?.(clientSocket, msg, type);
       } catch (error) {

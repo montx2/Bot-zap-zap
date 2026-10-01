@@ -139,20 +139,132 @@ export async function postMultipart(url, fields, files, opts = {}) {
   return { json: null, buffer: Buffer.from(raw), contentType: ct };
 }
 
-/** Resolve redirects e retorna a URL final (para links curtos como pin.it). */
-export async function resolveRedirect(url, { hops = 6 } = {}) {
+/**
+ * Requisição crua e tolerante: NUNCA lança por status (o chamador decide).
+ * Retorna o objeto Response do fetch já com o timeout aplicado.
+ */
+export async function rawFetch(url, { method = 'GET', headers = {}, body, timeoutMs = 20_000 } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs);
+  try {
+    return await fetch(url, {
+      method,
+      redirect: 'follow',
+      headers: {
+        'user-agent': randomUA(),
+        accept: '*/*',
+        'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8',
+        ...lowerKeys(headers)
+      },
+      body,
+      signal: ctrl.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** O user-agent que hosts (Threads, Instagram, Facebook) usam para link preview. */
+export const CRAWLER_AGENT = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+
+/** Headers de navegação completa — hosts que bloqueiam fetch simples exigem estes. */
+export const BROWSER_PAGE_HEADERS = {
+  'User-Agent': randomUA(),
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1'
+};
+
+/** GET tolerante: devolve texto/JSON já parseado + status e url final. */
+export async function httpGet(url, { headers = {}, timeoutMs = 20_000, json = false } = {}) {
+  const res = await rawFetch(url, { method: 'GET', headers, timeoutMs });
+  const out = {
+    status: res.status,
+    ok: res.ok,
+    headers: res.headers,
+    finalUrl: res.url || url,
+    contentType: String(res.headers.get('content-type') || '')
+  };
+  if (json) {
+    const text = await res.text();
+    try {
+      out.data = JSON.parse(text);
+    } catch {
+      out.data = null;
+    }
+    out.text = text;
+  } else {
+    out.text = await res.text();
+  }
+  return out;
+}
+
+/**
+ * Resolve redirects e retorna a URL final (links curtos: pin.it, vm.tiktok,
+ * fb.watch, instagram /share/, youtu.be…).
+ * Tenta HEAD e, se o host recusar, cai para GET — vários hosts não respondem HEAD.
+ */
+export async function resolveRedirect(url, { hops = 6, headers = {}, timeoutMs = 15_000 } = {}) {
   let current = url;
   for (let i = 0; i < hops; i++) {
-    const res = await fetchWithTimeout(current, { redirect: 'manual', timeoutMs: 20_000, method: 'HEAD' })
-      .catch(() => null);
-    const loc = res?.headers?.get('location');
-    if (res && [301, 302, 303, 307, 308].includes(res.status) && loc) {
-      current = new URL(loc, current).toString();
-      continue;
+    // 1) HEAD (barato)
+    let location = null;
+    try {
+      const res = await rawFetch(current, {
+        method: 'HEAD',
+        redirect: 'manual',
+        headers,
+        timeoutMs
+      });
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        location = res.headers.get('location');
+      }
+    } catch {
+      /* ignora */
     }
-    break;
+    // 2) GET manual (hosts que recusam HEAD)
+    if (!location) {
+      try {
+        const res = await rawFetch(current, {
+          method: 'GET',
+          redirect: 'manual',
+          headers: { ...BROWSER_PAGE_HEADERS, ...headers },
+          timeoutMs
+        });
+        if ([301, 302, 303, 307, 308].includes(res.status)) {
+          location = res.headers.get('location');
+        }
+        res.body?.cancel?.().catch(() => {});
+      } catch {
+        /* ignora */
+      }
+    }
+    if (!location) break;
+    try {
+      current = new URL(location, current).toString();
+    } catch {
+      break;
+    }
   }
   return current;
+}
+
+/** Descobre o Referer correto para CDN de mídia (alguns exigem ou dão 403). */
+export function mediaReferer(url) {
+  const u = String(url || '');
+  if (u.includes('tikwm.com')) return 'https://www.tikwm.com/';
+  if (u.includes('tiktokcdn') || u.includes('tiktok')) return 'https://www.tiktok.com/';
+  if (u.includes('pinimg.com')) return 'https://www.pinterest.com/';
+  if (u.includes('cdninstagram') || u.includes('fbcdn.net')) return 'https://www.instagram.com/';
+  if (u.includes('googlevideo.com') || u.includes('ytimg.com')) return 'https://www.youtube.com/';
+  if (u.includes('twimg.com')) return 'https://x.com/';
+  if (u.includes('fbcdn') || u.includes('facebook')) return 'https://www.facebook.com/';
+  if (u.includes('redd.it')) return 'https://www.reddit.com/';
+  return '';
 }
 
 export function shortUrl(url) {

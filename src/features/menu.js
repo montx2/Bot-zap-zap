@@ -1,25 +1,76 @@
-// 🎨 MENU — bonito, elegante e clean. Qualquer pessoa entende de primeira.
+// 🎨 MENUS — separados em 2 versões:
+// 1) ownerMenu(): menu COMPLETO que só aparece no privado do dono.
+// 2) publicMenu(): menu para grupos/conversas liberadas com .ativar.
+//    Mostra TUDO (figurinhas, downloads de qualquer rede, IA, voz…)
+//    MENOS as duas funções 100% privadas: View Once e Anti-Delete,
+//    que não são citadas em nenhum lugar e não respondem para terceiros.
 
 import { cfg } from '../core/config.js';
 import { PLATFORM, PLATFORM_LABEL } from '../core/platform.js';
+import { hasYtDlp } from './downloaders/ytdlp.js';
 
 const BORDA = '━━━━━━━━━━━━━━━━━━';
 
-export function mainMenu() {
+/**
+ * Menu público para chats/grupos liberados com .ativar.
+ * Regra: ZERO menção a View Once e Anti-Delete. Todo o resto aparece.
+ */
+export function publicMenu() {
   const nome = cfg.get().nomeBot;
-  return `${nome}
+  return `${nome} ⚡
 ${BORDA}
-✨ Bem-vindo(a)! Toque no que precisa:
+🖼️ *FIGURINHAS*
+  .s → foto, vídeo ou GIF vira figurinha
+  .sfundo → figurinha SEM FUNDO (IA)
+  .fundo → remove o fundo em PNG
+  .take Pack|Autor → muda nome do pacote
 
-👁️ *VIEW ONCE*
-Responda qualquer foto/vídeo de
-visualização única com *qualquer
-mensagem* e eu baixo pra você.
-A captura automática também já vem ligada.
+⬇️ *DOWNLOADS*
+Qualquer rede social: é só mandar o link!
+  .dl <link> [qualidade] → universal
+  .tiktok <link>  ·  .ttmp3 <link>
+  .pin <link>  ·  .insta <link>
+  .yt <link>  ·  .ytmp3 <link>
+  .tw <link>  ·  .face <link>
+Redes: TikTok · Instagram · YouTube ·
+Pinterest · X · Facebook · Threads ·
+Reddit · Twitch · Vimeo e mais.
 
-🛡️ *ANTI-DELETE*
-Está *ligado em tudo* por padrão.
-Ninguém apaga nada sem eu recuperar.
+🧠 *INTELIGÊNCIA ARTIFICIAL*
+  .ia <pergunta>  ·  .criar <ideia>
+  .voz <texto>  ·  .traduz <idioma> <txt>
+  .resumo <texto>  ·  .ia reset
+
+⚙️ *OUTROS*
+  .menu  ·  .ping  ·  .info
+
+💡 Envie uma foto, vídeo ou GIF com a
+legenda *.s*, ou cole qualquer link de
+rede social que eu baixo na melhor
+qualidade. 🎚️ Qualidades: melhor (padrão
+👑), alta, media, baixa.
+${BORDA}`;
+}
+
+/** Menu completo do dono — exibido SOMENTE no privado do próprio dono. */
+export function ownerMenu() {
+  const nome = cfg.get().nomeBot;
+  return `${nome} — *PAINEL DO DONO* 👑
+${BORDA}
+🔒 *CONTROLE DE CHATS / GRUPOS*
+  .ativar → libera o bot no chat/grupo
+  .desativar → bloqueia o chat/grupo
+  .desativar tudo → bloqueia todos
+  .ativos → lista chats liberados
+
+👁️ *VIEW ONCE (100% SILENCIOSO)*
+Automático ou respondendo a visu:
+vai *somente pro seu privado* (0 rastros).
+  .vo → status  ·  .vo on | off
+
+🛡️ *ANTI-DELETE (100% SILENCIOSO)*
+Tudo apagado vai *somente pro seu
+privado* (0 rastros no grupo/chat).
   .antidelete → status e filtros
 
 🖼️ *FIGURINHAS*
@@ -29,66 +80,72 @@ Ninguém apaga nada sem eu recuperar.
   .take nome|autor → renomear pack
 
 ⬇️ *DOWNLOADS*
-Cole o link que eu baixo na *melhor
-qualidade* (peça "baixa" p/ reduzir):
-  .dl <link> [qualidade]
+  .dl <link> [qualidade] → universal
   .tiktok <link>  ·  .ttmp3 <link>
   .pin <link>  ·  .insta <link>
-Pinterest, TikTok, Instagram, YouTube,
-X, Facebook, Threads, Reddit e +200 sites.
+  .yt <link>  ·  .ytmp3 <link>
+  .tw <link>  ·  .face <link>
+  .menudl → guia completo
 
 🧠 *IA*
-  .ia <pergunta> → conversa comigo
-  .criar <ideia> → gero a imagem
-  .voz <texto> → falo o texto
-  .traduz <idioma> <texto>
-  .resumo <texto>
-  .ia reset → limpar memória
+  .ia <pergunta>  ·  .criar <ideia>
+  .voz <texto>  ·  .traduz <idioma> <txt>
+  .resumo <texto>  ·  .ia reset
 
 ⚙️ *OUTROS*
-  .ping · .info · .doctor
+  .ping · .info · .doctor · .config
 ${BORDA}
 Feito com ⚡ e muito café`;
 }
 
+export function mainMenu({ isOwnerPrivate = true } = {}) {
+  return isOwnerPrivate ? ownerMenu() : publicMenu();
+}
+
 export function downloadMenu() {
+  const extra = hasYtDlp() ? '\n🧰 yt-dlp local detectado (modo turbo ativo).' : '';
   return `⬇️ *GUIA DE DOWNLOADS*
 ${BORDA}
-Basta enviar o link, ou usar comandos:
+Basta colar o link, ou usar um comando:
 
-.tiktok <link> [qualidade]
-.ttmp3 <link> → só a música
-.pin <link> [qualidade]
-.insta <link>
-.dl <link> [qualidade] → universal
+🎵 .tiktok <link> [qualidade]
+🎶 .ttmp3 <link> → só a música
+📌 .pin <link> [qualidade]
+📸 .insta <link>
+▶️ .yt <link>  ·  .ytmp3 <link>
+𝕏 .tw <link>  ·  👥 .face <link>
+🌐 .dl <link> [qualidade] → universal
+
+Redes atendidas: TikTok · Instagram ·
+YouTube · Pinterest · X/Twitter ·
+Facebook · Threads · Reddit · Twitch ·
+Vimeo · Snapchat · SoundCloud e muito
+mais pelo modo universal.
 
 🎚️ *Qualidades:* melhor (padrão 👑),
 alta, media, baixa
 Ex.: .tiktok <link> baixa
-
-💡 *Dica:* pode só colar o link solto
-no chat que eu baixo sozinho!
-${BORDA}`;
+${BORDA}${extra}`;
 }
 
 export function stickerMenu() {
-  return `🖼️ *GUIA DE FIGURINHAS*
+  return `🖼️ *FIGURINHAS*
 ${BORDA}
-.s → responde/envia foto, vídeo ou GIF
-.sfundo → figurinha transparente (IA)
-.fundo → PNG sem fundo (não figurinha)
-.take MeuPack|MinhaAutoria
+  .s → foto, vídeo ou GIF vira figurinha
+  .sfundo → figurinha SEM FUNDO (IA)
+  .fundo → remove o fundo em PNG
+  .take Pack|Autor → muda o pacote
 
-🎭 A remoção de fundo usa um POOL de
-APIs: configure várias contas no .env
-(REMOVE_BG_KEYS) e tenha uso ilimitado.
+💡 Envie uma mídia com a legenda *.s*
+ou responda a mídia digitando *.s*.
 ${BORDA}`;
 }
 
 export function antiDeleteMenu() {
-  return `🛡️ *ANTI-DELETE*
+  return `🛡️ *ANTI-DELETE (SILENCIOSO)*
 ${BORDA}
-Ligado em TUDO por padrão. Filtros:
+Envia tudo que apagarem silenciosamente
+para o seu privado (0 rastros no grupo).
 
 .antidelete → status
 .antidelete ignorar grupos
@@ -98,9 +155,6 @@ Ligado em TUDO por padrão. Filtros:
 .antidelete remover <filtro>
 .antidelete lista
 .antidelete on | off
-
-Quando alguém apaga, eu restauro a
-mensagem aqui mesmo no chat. 👀
 ${BORDA}`;
 }
 
@@ -119,7 +173,7 @@ export function infoText({ uptime, cacheSize, bgRows, aiRows, poolRows, ownerNam
     '🧠 *IA*',
     ...aiRows.map((r) => `• ${r}`),
     '',
-    '⬇️ *Pools de download*',
+    '🌐 *Downloaders*',
     ...poolRows.map((r) => `• ${r}`),
     BORDA
   ].join('\n');
