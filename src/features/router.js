@@ -1,6 +1,7 @@
 // 🧭 ROUTER — despacha comandos, captura view once por resposta,
 // aplica anti-delete e faz auto-download de links.
 
+import { isStale, alreadySeen } from '../core/freshness.js';
 import { cfg } from '../core/config.js';
 import { log } from '../core/logger.js';
 import { messageCache } from '../wa/cache.js';
@@ -18,6 +19,19 @@ const STARTED_AT = Date.now();
 
 export { isViewOnce, unwrapViewOnce };
 
+let staleCount = 0;
+let staleTimer = null;
+function noteStale() {
+  staleCount += 1;
+  if (staleTimer) return;
+  staleTimer = setTimeout(() => {
+    log.info(`🕰️ ${staleCount} mensagem(ns) antiga(s) ignorada(s) (backlog do WhatsApp ao conectar)`);
+    staleCount = 0;
+    staleTimer = null;
+  }, 3000);
+  staleTimer.unref?.();
+}
+
 /**
  * Ponto de entrada para TODA mensagem recebida.
  */
@@ -26,8 +40,15 @@ export async function handleMessage(sock, msg, deps) {
   if (!msg?.message) return;
   if (msg.key.remoteJid === 'status@broadcast') return;
 
-  // 0) Anti-delete: armazena tudo que chega
+  // 0) Anti-delete: armazena tudo que chega (inclusive o backlog antigo, em silêncio)
   messageCache.put(msg);
+
+  // 0.1) Backlog/histórico/reentrega: guarda no cache mas NÃO age (senão o bot
+  // responde e reenvia dezenas de mensagens antigas toda vez que reconecta).
+  if (isStale(msg, deps.type) || alreadySeen(msg)) {
+    noteStale();
+    return;
+  }
 
   // 1) Mensagem apagada (REVOKE)
   const proto = msg.message.protocolMessage;
