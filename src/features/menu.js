@@ -20,7 +20,9 @@ export function publicMenu() {
   return `${nome} ⚡
 ${BORDA}
 🖼️ *FIGURINHAS*
-  .s → foto, vídeo ou GIF vira figurinha
+  .s → foto, vídeo ou GIF vira figurinha (preenche o quadrado)
+  .s inteira → mantém a imagem inteira, sem esticar
+  .s cortar → preenche sem esticar (corta as bordas)
   .sfundo → figurinha SEM FUNDO (IA)
   .fundo → remove o fundo em PNG
   .take Pack|Autor → muda nome do pacote
@@ -74,7 +76,9 @@ privado* (0 rastros no grupo/chat).
   .antidelete → status e filtros
 
 🖼️ *FIGURINHAS*
-  .s → imagem/vídeo/GIF vira figurinha
+  .s → imagem/vídeo/GIF vira figurinha (preenche o quadrado)
+  .s inteira → mantém a imagem inteira, sem esticar
+  .s cortar → preenche sem esticar (corta as bordas)
   .sfundo → figurinha SEM FUNDO (IA)
   .fundo → só remove o fundo (PNG)
   .take nome|autor → renomear pack
@@ -131,13 +135,16 @@ ${BORDA}${extra}`;
 export function stickerMenu() {
   return `🖼️ *FIGURINHAS*
 ${BORDA}
-  .s → foto, vídeo ou GIF vira figurinha
+  .s → foto, vídeo ou GIF vira figurinha (preenche o quadrado)
+  .s inteira → mantém a imagem inteira, sem esticar
+  .s cortar → preenche sem esticar (corta as bordas)
   .sfundo → figurinha SEM FUNDO (IA)
   .fundo → remove o fundo em PNG
   .take Pack|Autor → muda o pacote
 
 💡 Envie uma mídia com a legenda *.s*
 ou responda a mídia digitando *.s*.
+📐 Modos: *.s* (preenche), *.s inteira*, *.s cortar*
 ${BORDA}`;
 }
 

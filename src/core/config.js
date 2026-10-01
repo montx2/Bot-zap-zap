@@ -8,8 +8,8 @@ import { envList, envBool } from './env.js';
 
 export const DEFAULT_CONFIG = {
   nomeBot: '⚡ NEXUS',
-  nomePack: 'NEXUS ⚡',
-  autorPack: 'feito com amor',
+  nomePack: 'MontxBOT',
+  autorPack: '×by ꧁montx2_꧂',
   prefixos: ['.', '!', '/', '#'],
 
   // ── Controle de Acesso (Modo Privado) ─────────────────────
@@ -65,6 +65,14 @@ class Config {
     if (!Array.isArray(merged.antiDelete.ignorar)) merged.antiDelete.ignorar = [];
     if (!Array.isArray(merged.autorizados)) merged.autorizados = [];
     if (typeof merged.modoPrivado !== 'boolean') merged.modoPrivado = true;
+
+    // Assinatura: quem ainda tem a assinatura padrão antiga passa para a nova
+    // (se você personalizou o nome/autor, o seu valor é mantido).
+    if (merged.nomePack === 'NEXUS ⚡' && merged.autorPack === 'feito com amor') {
+      merged.nomePack = DEFAULT_CONFIG.nomePack;
+      merged.autorPack = DEFAULT_CONFIG.autorPack;
+      if (saved) writeJsonNow(FILE, merged);
+    }
 
     // Migração obrigatória da versão antiga que vazava em grupos:
     if (!saved || saved._schemaVersion !== 2) {

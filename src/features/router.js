@@ -16,7 +16,7 @@ import { log } from '../core/logger.js';
 import { messageCache, isBotSent, markBotSent } from '../wa/cache.js';
 import { extractAnyText, isIgnored, normalizeIgnoreTarget, handleDelete, statusText } from './antidelete.js';
 import { isViewOnce, onViewOnceMessage, onViewOnceReply, unwrapViewOnce } from './viewonce.js';
-import { extractStickerSource, makeSticker, packInfo, isAnimatedWebp } from './sticker.js';
+import { extractStickerSource, makeSticker, packInfo, isAnimatedWebp, parseFit } from './sticker.js';
 import { removeBackground, bgStatus, bgPools } from './bgremoval.js';
 import { aiChat, aiImage, aiVoice, aiTranslate, aiSummary, resetChatMemory, aiStatus } from './ai.js';
 import { resolveDownload, sendDownload, parseQuality, autoDownload, isKnownSocialUrl } from './download.js';
@@ -571,7 +571,7 @@ async function runCommand(sock, msg, cmd, ctx) {
     case 'figurinha': {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
       if (!source) return reply('📸 Envie ou responda uma *imagem, vídeo ou GIF* com *.s*!');
-      const webp = await makeSticker(source, { ...packInfo(), onProgress: reply });
+      const webp = await makeSticker(source, { ...packInfo(), fit: parseFit(args), onProgress: reply });
       await reply('📤 Enviando figurinha…');
       await sendStickerMessage(sock, jid, webp, msg);
       return reply('✅ Figurinha criada com sucesso! 🖼️');
@@ -582,7 +582,7 @@ async function runCommand(sock, msg, cmd, ctx) {
     case 'sfundinho': {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
       if (!source) return reply('📸 Envie ou responda uma *imagem* com *.sfundo*!');
-      const webp = await makeSticker(source, { ...packInfo(), removeBg: true, onProgress: reply });
+      const webp = await makeSticker(source, { ...packInfo(), removeBg: true, fit: parseFit(args), onProgress: reply });
       await reply('📤 Enviando figurinha sem fundo…');
       await sendStickerMessage(sock, jid, webp, msg);
       return reply('✅ Figurinha sem fundo pronta! 🎭');
@@ -611,7 +611,7 @@ async function runCommand(sock, msg, cmd, ctx) {
       const source = await extractStickerSource(sock, msg, { onProgress: reply, allowViewOnce: inOwnerPrivate });
       if (!source) return reply('🖼️ Responda uma *figurinha* com .take NomePack|NomeAutor');
       const [pack = packInfo().pack, author = packInfo().author] = argText.split('|').map((s) => s.trim());
-      const webp = await makeSticker(source, { pack, author, onProgress: reply });
+      const webp = await makeSticker(source, { pack, author, fit: 'contain', onProgress: reply });
       await reply('📤 Enviando figurinha renomeada…');
       await sendStickerMessage(sock, jid, webp, msg);
       return reply(`✅ Pacote atualizado: *${pack}*`);

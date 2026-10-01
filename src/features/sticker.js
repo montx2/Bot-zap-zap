@@ -226,7 +226,7 @@ export async function extractStickerSource(sock, msg, { onProgress, allowViewOnc
  * Cria figurinha a partir da mídia.
  * @returns {Promise<Buffer>} webp pronto para enviar (com VP8X + EXIF válidos)
  */
-export async function makeSticker(source, { removeBg = false, pack, author, emojis, onProgress } = {}) {
+export async function makeSticker(source, { removeBg = false, pack, author, emojis, fit = 'fill', onProgress } = {}) {
   const { buffer, type, node } = source;
   const mime = String(node?.mimetype || '').toLowerCase();
   const magicExt = detectMediaExt(buffer, '');
@@ -243,7 +243,7 @@ export async function makeSticker(source, { removeBg = false, pack, author, emoj
       await onProgress?.('🎭 Removendo o fundo com IA…');
       const { buffer: cut, via } = await removeBackground(png);
       await onProgress?.(`🖌️ Fundo removido (${via})! Criando figurinha 512×512…`);
-      const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png', onProgress });
+      const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png', fit, onProgress });
       await onProgress?.('🏷️ Gravando dados da figurinha…');
       return tagSticker(webp, { pack, author, emojis });
     }
@@ -255,7 +255,7 @@ export async function makeSticker(source, { removeBg = false, pack, author, emoj
     // Se for um WebP estático fora do padrão 512x512 e tivermos FFmpeg, padroniza em 512x512
     if (!info.animated && (info.width !== 512 || info.height !== 512) && hasFfmpeg()) {
       await onProgress?.('🖌️ Ajustando figurinha para 512×512…');
-      const { buffer: webp } = await toStickerWebp(buffer, { animated: false, ext: '.webp', onProgress });
+      const { buffer: webp } = await toStickerWebp(buffer, { animated: false, ext: '.webp', fit, onProgress });
       await onProgress?.('🏷️ Gravando dados da figurinha…');
       return tagSticker(webp, { pack, author, emojis: finalEmojis });
     }
@@ -287,16 +287,34 @@ export async function makeSticker(source, { removeBg = false, pack, author, emoj
     const { buffer: cut, via } = await removeBackground(buffer);
     log.ok(`fundo removido via ${via} (${formatBytes(cut.length)})`);
     await onProgress?.(`🖌️ Fundo removido (${via})! Convertendo para figurinha 512×512…`);
-    const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png', onProgress });
+    const { buffer: webp } = await toStickerWebp(cut, { animated: false, ext: '.png', fit, onProgress });
     await onProgress?.('🏷️ Gravando dados da figurinha…');
     return tagSticker(webp, { pack, author, emojis });
   }
 
   await onProgress?.(isVideo ? '🎬 Convertendo vídeo/GIF em figurinha animada…' : '🖌️ Convertendo imagem em figurinha 512×512…');
   const ext = magicExt || (isGif ? '.gif' : isVideo ? '.mp4' : mime.includes('png') ? '.png' : '.jpg');
-  const { buffer: webp } = await toStickerWebp(buffer, { animated: isVideo, ext, onProgress });
+  const { buffer: webp } = await toStickerWebp(buffer, { animated: isVideo, ext, fit, onProgress });
   await onProgress?.('🏷️ Gravando dados da figurinha…');
   return tagSticker(webp, { pack, author, emojis });
+}
+
+const FIT_WORDS = {
+  contain: ['inteira', 'inteiro', 'full', 'original', 'normal', 'contain', 'proporcao', 'proporção'],
+  cover: ['cortar', 'corte', 'crop', 'cover', 'centro'],
+  fill: ['preencher', 'esticar', 'fill']
+};
+
+/**
+ * Lê o filtro de enquadramento nos argumentos do comando (.s inteira | .s cortar | .s).
+ * @returns {'fill'|'contain'|'cover'} padrão 'fill' (preenche o quadrado todo)
+ */
+export function parseFit(args = []) {
+  const words = args.map((a) => String(a).toLowerCase().replace(/^[-–—]+/, ''));
+  for (const [fit, list] of Object.entries(FIT_WORDS)) {
+    if (words.some((w) => list.includes(w))) return fit;
+  }
+  return 'fill';
 }
 
 /** Info do pack atual para comandos. */
